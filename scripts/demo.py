@@ -1,5 +1,8 @@
 """Demo CLI: dispara o webhook do matricula.rio e simula as respostas da familia.
 
+Por padrao mostra um roteiro so: uma inscricao, uma crianca, os dois contatos
+de apoio - o caminho que a maioria das familias percorre.
+
 Dois modos de apresentacao:
 
     uv run python scripts/demo.py --simples     # le como uma conversa de WhatsApp
@@ -7,11 +10,13 @@ Dois modos de apresentacao:
 
 Extras:
 
+    --parte tudo            os 9 cenarios (fila de irmaos, recusas, expiracao)
+    --devagar [FATOR]       pausa entre mensagens, para gravar em video
     --pausa                 espera Enter entre as mensagens (bom para apresentar)
     --base-url URL          bate num servidor de pe em vez de rodar em processo
     --manter-banco          nao apaga o banco da demo antes de rodar
 
-Por padrao roda a aplicacao em processo (TestClient), sem precisar de servidor.
+Roda a aplicacao em processo (TestClient), sem precisar de servidor nem banco.
 """
 
 from __future__ import annotations
@@ -305,6 +310,65 @@ def _motivo_leigo(detalhe: dict) -> str:
 
 
 # ------------------------------------------------------------------ cenarios
+
+
+def roda_essencial(api: Api) -> None:
+    """Roteiro minimo: uma inscricao, uma crianca, os dois contatos de apoio.
+
+    E' o padrao da demo. Sem irmaos, sem fila, sem recusas, sem expiracao - o
+    caminho que a maioria das familias percorre, do comeco ao fim. O roteiro
+    completo continua disponivel em --parte tudo.
+    """
+    cabecalho(
+        "Inscricao de uma crianca e captura dos contatos de apoio",
+        "A inscrição da Ana chega na Prefeitura",
+    )
+    nota(
+        tecnico="POST /webhooks/matricula-rio  (Ana Silva)",
+        simples="O matricula.rio informa que a Ana foi inscrita na creche. O "
+                "sistema cadastra a criança e puxa conversa no WhatsApp da "
+                "mãe, a Maria, pedindo pessoas de confiança para acionar caso "
+                "não consigam falar com ela quando a vaga surgir.",
+    )
+    api.inscricao(
+        codigo_inscricao="INSC-2026-000123",
+        crianca_cpf=CPF_ANA,
+        crianca_nome="Ana Silva",
+        responsavel_nome="Maria Silva",
+        responsavel_telefone="(21) 99999-0001",
+    )
+
+    cabecalho(
+        "Captura guiada, um campo por vez",
+        "A Maria responde, uma pergunta por vez",
+    )
+    nota(
+        tecnico="etapas NOME -> PARENTESCO -> TELEFONE",
+        simples="Nome, parentesco e telefone, nessa ordem. O contato só é "
+                "guardado quando o telefone chega válido.",
+    )
+    api.responde(TEL_MARIA, "Joana Souza")
+    api.responde(TEL_MARIA, "vovó")
+    api.responde(TEL_MARIA, "(21) 98888-1234")
+    nota(
+        tecnico="1o contato gravado; etapa CONFIRMAR_PROXIMO",
+        simples="Primeiro contato registrado. O sistema oferece um segundo.",
+    )
+    api.responde(TEL_MARIA, "sim")
+    api.responde(TEL_MARIA, "Carlos Pereira")
+    api.responde(TEL_MARIA, "vizinho")
+    api.responde(TEL_MARIA, "21 97777-5555")
+
+    cabecalho(
+        "Arvore de contato resultante (GET /criancas/:cpf)",
+        "O que ficou registrado",
+    )
+    nota(
+        tecnico=f"GET /criancas/{CPF_ANA}",
+        simples="A Ana entra na fila da creche com três portas para bater, e "
+                "não uma: a mãe, a avó e o vizinho.",
+    )
+    api.crianca(CPF_ANA)
 
 
 def roda(api: Api) -> None:
@@ -695,10 +759,12 @@ def main() -> None:
                     metavar="FATOR",
                     help="pausa proporcional ao texto, para gravar em video "
                          "(1.0 = ritmo de leitura; 0.5 = duas vezes mais rapido)")
-    ap.add_argument("--parte", choices=("tudo", "captura", "expiracao"),
-                    default="tudo",
-                    help="recorta a demo: 'captura' = cenarios 1 a 6, "
-                         "'expiracao' = cenarios 7 e 8 (bons para um GIF curto)")
+    ap.add_argument("--parte",
+                    choices=("essencial", "tudo", "captura", "expiracao"),
+                    default="essencial",
+                    help="essencial (padrao) = uma inscricao e a captura dos "
+                         "contatos; tudo = os 9 cenarios; captura = cenarios "
+                         "1 a 6; expiracao = cenarios 7 e 8")
     ap.add_argument("--base-url", help="bate num servidor ja rodando")
     ap.add_argument("--manter-banco", action="store_true",
                     help="nao apaga o banco da demo antes de rodar")
@@ -732,16 +798,19 @@ def main() -> None:
 
     with TestClient(app) as cliente:
         api = Api(cliente)
-        # 'expiracao' pode rodar sozinho porque usa outra familia (Carla) e nao
-        # depende de nada que os cenarios 1 a 6 tenham deixado no banco.
-        if args.parte in ("tudo", "captura"):
-            roda(api)
-        if args.parte in ("tudo", "expiracao"):
-            roda_expiracao(api, BANCO_DEMO)
-        if args.parte in ("tudo", "captura"):
-            prova_trigger_no_banco(BANCO_DEMO)
-        if args.parte == "tudo":
-            resumo_final(api)
+        if args.parte == "essencial":
+            roda_essencial(api)
+        else:
+            # 'expiracao' pode rodar sozinho porque usa outra familia (Carla) e
+            # nao depende do que os cenarios 1 a 6 deixaram no banco.
+            if args.parte in ("tudo", "captura"):
+                roda(api)
+            if args.parte in ("tudo", "expiracao"):
+                roda_expiracao(api, BANCO_DEMO)
+            if args.parte in ("tudo", "captura"):
+                prova_trigger_no_banco(BANCO_DEMO)
+            if args.parte == "tudo":
+                resumo_final(api)
 
     if not SIMPLES:
         print(f"\nBanco da demo: {BANCO_DEMO}")

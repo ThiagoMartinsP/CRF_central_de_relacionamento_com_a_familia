@@ -1,0 +1,13 @@
+[project]
+name = "crf-captura"
+version = "0.1.0"
+description = "CRF - MVP reduzido: cadastro e captura de contatos de apoio (recorte T0)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+]
+
+[tool.uv]
+package = false

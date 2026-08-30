@@ -146,6 +146,23 @@ def _quebra(texto: str, largura: int = 62) -> list[str]:
     return linhas
 
 
+# ------------------------------------------------------- relogio da conversa
+#
+# Horario ficticio, so para os baloes parecerem uma conversa real. Avanca a cada
+# mensagem; a expiracao adianta em dias, para o horario contar a historia junto.
+
+_RELOGIO = [9 * 60 + 12]   # minutos desde a meia-noite
+
+
+def _hora(passo: int = 2) -> str:
+    _RELOGIO[0] = (_RELOGIO[0] + passo) % (24 * 60)
+    return f"{_RELOGIO[0] // 60:02d}:{_RELOGIO[0] % 60:02d}"
+
+
+def avanca_relogio(minutos: int) -> None:
+    _RELOGIO[0] = (_RELOGIO[0] + minutos) % (24 * 60)
+
+
 # ------------------------------------------------------------------ impressao
 
 
@@ -193,14 +210,71 @@ def nota(tecnico: str = "", simples: str = "") -> None:
         print(f"\n{tinta('--', CINZA)} {tinta(tecnico, FRACO)}")
 
 
+# Geometria dos baloes. recuo + interno + 2 precisa caber em LARGURA: o CRF
+# fica encostado a esquerda e a familia recuada para a direita, como num
+# aplicativo de mensagem.
+CRF_RECUO, CRF_INTERNO = 2, 52
+FAM_RECUO, FAM_INTERNO = 22, 34
+
+
+def _moldura_superior(rotulo: str, hora: str, interno: int) -> str:
+    prefixo = f"┌─ {rotulo} "
+    sufixo = f" {hora} ─┐"
+    enchimento = max(1, (interno + 2) - len(prefixo) - len(sufixo))
+    return prefixo + "─" * enchimento + sufixo
+
+
+def _balao(
+    rotulo: str,
+    conteudo: str,
+    *,
+    recuo: int,
+    interno: int,
+    cor: str,
+    hora: str,
+    entregue: bool = False,
+    digitando: bool = False,
+) -> None:
+    """Desenha um balao fechado, com rotulo e horario na moldura de cima.
+
+    `entregue` acrescenta o ✓✓ alinhado a direita da ultima linha - so faz
+    sentido no que o CRF envia. `digitando` faz o texto aparecer caractere a
+    caractere, para a resposta da familia parecer digitada na hora.
+    """
+    pad = " " * recuo
+    util = interno - 2
+    linhas = _quebra(conteudo, util) or [""]
+
+    if entregue:
+        selo = "✓✓"
+        if len(linhas[-1]) + 2 + len(selo) <= util:
+            linhas[-1] = linhas[-1].ljust(util - len(selo)) + selo
+        else:
+            linhas.append(selo.rjust(util))
+
+    print(pad + tinta(_moldura_superior(rotulo, hora, interno), cor))
+    barra = tinta("│", cor)
+    for linha in linhas:
+        if digitando and RITMO:
+            # Sem mover o cursor: o texto cresce da esquerda para a direita e a
+            # parede da direita fecha quando a linha termina.
+            print(f"{pad}{barra} ", end="", flush=True)
+            for caractere in linha:
+                print(caractere, end="", flush=True)
+                time.sleep(min(0.035 * RITMO, 0.12))
+            print(" " * (util - len(linha)) + f" {barra}")
+        else:
+            print(f"{pad}{barra} {linha.ljust(util)} {barra}")
+    print(pad + tinta("└" + "─" * interno + "┘", cor))
+
+
 def bot(mensagens: list[dict]) -> None:
     for m in mensagens:
         print()
         if SIMPLES:
-            print("        " + tinta("┌─ CRF · Prefeitura do Rio", AZUL))
-            for linha in _quebra(m["conteudo"]):
-                print(f"        {tinta('│', AZUL)} {linha}")
-            print("        " + tinta("└" + "─" * 30, AZUL))
+            _balao("CRF · Prefeitura do Rio", m["conteudo"], cor=AZUL,
+                   hora=_hora(), entregue=True,
+                   recuo=CRF_RECUO, interno=CRF_INTERNO)
         else:
             rotulo = tinta(f"[{m['template']}]", AZUL, FRACO)
             print(f"   {tinta('CRF', AZUL)}  {rotulo}")
@@ -211,15 +285,31 @@ def bot(mensagens: list[dict]) -> None:
 
 def familia(telefone: str, texto: str) -> None:
     if SIMPLES:
-        quem = NOMES.get(telefone, "Familia")
         print()
-        print("  " + tinta(f"┌─ {quem}", VERDE))
-        for linha in _quebra(texto):
-            print(f"  {tinta('│', VERDE)} {linha}")
-        print("  " + tinta("└" + "─" * 30, VERDE))
+        _balao(NOMES.get(telefone, "Familia"), texto, cor=VERDE,
+               hora=_hora(), digitando=True,
+               recuo=FAM_RECUO, interno=FAM_INTERNO)
     else:
         print(f"   {tinta('FAM', VERDE)}  > {texto!r}")
     _espera(texto)
+
+
+def fecho(tecnico: str, titulo: str, simples: str) -> None:
+    """Bloco de conclusao: o "para que serve" depois de mostrar o resultado.
+
+    Barra lateral em vez de balao, de proposito: nao pode ser confundido com
+    uma mensagem que o CRF mandou para a familia.
+    """
+    print()
+    if SIMPLES:
+        barra = tinta("▌", ROXO)
+        print(f"  {barra} {tinta(titulo.upper(), NEGRITO)}")
+        print(f"  {barra}")
+        for linha in _quebra(simples, 66):
+            print(f"  {barra} {linha}")
+        _espera(simples)
+    elif tecnico:
+        print(f"{tinta('--', CINZA)} {tinta(tecnico, FRACO)}")
 
 
 def marca(simbolo: str, texto: str, cor: str = CINZA) -> None:
@@ -445,6 +535,20 @@ def roda_essencial(api: Api) -> None:
     )
     api.crianca(CPF_ANA)
 
+    fecho(
+        tecnico="destino da arvore: base consultada pela unidade escolar na "
+                "convocacao de vaga (fase seguinte, fora deste recorte)",
+        titulo="Para que serve",
+        simples="Essa árvore de contatos vai para uma base disponibilizada às "
+                "creches. Quando a vaga da Ana aparecer, a unidade tenta "
+                "primeiro a Maria, no número dela. Se não conseguir falar — "
+                "número trocado, ninguém atende, celular perdido — a vaga não "
+                "volta para a fila: a creche recorre às alternativas que a "
+                "própria família cadastrou, a Joana e depois o Carlos. É para "
+                "isso que os contatos foram pedidos meses antes, no dia da "
+                "inscrição.",
+    )
+
 
 def roda(api: Api) -> None:
     cabecalho(
@@ -628,6 +732,9 @@ def envelhece_sessao(
     """
     alvo = datetime.now(timezone.utc) - timedelta(minutes=minutos)
     marca = alvo.strftime("%Y-%m-%dT%H:%M:%S.") + f"{alvo.microsecond // 1000:03d}Z"
+    # Empurra o relogio ficticio dos baloes junto, para o horario contar a
+    # mesma historia que a narracao.
+    avanca_relogio(minutos)
     con = sqlite3.connect(caminho)
     cursor = con.execute(
         "UPDATE conversa_captura SET ultima_resposta_em = ? WHERE status = 'EM_ANDAMENTO' "

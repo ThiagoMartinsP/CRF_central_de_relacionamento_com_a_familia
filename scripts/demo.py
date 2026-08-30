@@ -20,6 +20,7 @@ import argparse
 import os
 import sqlite3
 import sys
+import time
 import warnings
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -44,6 +45,7 @@ NOMES = {TEL_MARIA: "Maria", TEL_CARLA: "Carla", TEL_DESCONHECIDO: "Numero novo"
 # Preenchido por main(); controla apenas a apresentacao, nunca o comportamento.
 SIMPLES = False
 PAUSA = False
+RITMO = 0.0   # multiplicador de pausa; 0 = sem pausa nenhuma
 LARGURA = 78
 
 
@@ -77,12 +79,20 @@ def _quebra(texto: str, largura: int = 62) -> list[str]:
 # ------------------------------------------------------------------ impressao
 
 
-def _espera() -> None:
+def _espera(texto: str = "") -> None:
+    """Ritmo da apresentacao. Nao afeta a aplicacao, so a leitura.
+
+    Com --devagar a pausa e' proporcional ao tamanho do texto, para a demo
+    caber numa gravacao de tela: sem isso ela termina em ~1 segundo e as 451
+    linhas passam como um borrao.
+    """
     if PAUSA:
         try:
             input()
         except EOFError:
             pass
+    elif RITMO:
+        time.sleep(min(0.45 + len(texto) * 0.016, 4.5) * RITMO)
 
 
 def cabecalho(tecnico: str, simples: str) -> None:
@@ -95,6 +105,8 @@ def cabecalho(tecnico: str, simples: str) -> None:
         print("=" * LARGURA)
         print(tecnico)
         print("=" * LARGURA)
+    # Respiro maior na virada de capitulo: e' onde quem assiste se reorienta.
+    _espera(simples if SIMPLES else tecnico)
 
 
 def nota(tecnico: str = "", simples: str = "") -> None:
@@ -104,6 +116,7 @@ def nota(tecnico: str = "", simples: str = "") -> None:
             print()
             for linha in _quebra(simples, 70):
                 print(f"  {linha}")
+            _espera(simples)
     elif tecnico:
         print(f"\n-- {tecnico}")
 
@@ -120,7 +133,7 @@ def bot(mensagens: list[dict]) -> None:
             print(f"   CRF  [{m['template']}]")
             for linha in _quebra(m["conteudo"], 68):
                 print(f"        {linha}")
-        _espera()
+        _espera(m["conteudo"])
 
 
 def familia(telefone: str, texto: str) -> None:
@@ -133,7 +146,7 @@ def familia(telefone: str, texto: str) -> None:
         print("  └" + "─" * 30)
     else:
         print(f"   FAM  > {texto!r}")
-    _espera()
+    _espera(texto)
 
 
 def marca(simbolo: str, texto: str) -> None:
@@ -283,11 +296,12 @@ class Api:
 
 
 def _motivo_leigo(detalhe: dict) -> str:
-    return {
+    traducoes: dict[str, str] = {
         "CPF_CRIANCA_INVALIDO": "faltou o CPF da criança",
         "CPF_CRIANCA_DV_INVALIDO": "o CPF informado não é um CPF válido",
         "CODIGO_INSCRICAO_EM_USO": "esse número de inscrição já é de outra criança",
-    }.get(detalhe["codigo"], detalhe["mensagem"])
+    }
+    return traducoes.get(detalhe["codigo"]) or str(detalhe["mensagem"])
 
 
 # ------------------------------------------------------------------ cenarios
@@ -509,7 +523,8 @@ def roda_expiracao(api: Api, caminho: Path) -> None:
     )
     nota(
         tecnico="Carla inscreve Elias com a captura da Duda aberta -> Elias enfileirado",
-        simples="Como antes, o irmão Elias é inscrito e vai para a fila.",
+        simples="O irmão Elias também é inscrito. Como a conversa da Duda "
+                "está aberta, ele entra na fila e espera a vez.",
     )
     api.inscricao(
         codigo_inscricao="INSC-2026-000302",
@@ -660,7 +675,7 @@ def resumo_final(api: Api) -> None:
 
 
 def main() -> None:
-    global SIMPLES, PAUSA
+    global SIMPLES, PAUSA, RITMO
 
     # O console do Windows usa cp1252 por padrao no Python 3.13, o que quebra
     # os acentos dos templates.
@@ -676,6 +691,14 @@ def main() -> None:
                     help="saida limpa, como uma conversa de WhatsApp")
     ap.add_argument("--pausa", action="store_true",
                     help="espera Enter entre as mensagens")
+    ap.add_argument("--devagar", nargs="?", type=float, const=1.0, default=0.0,
+                    metavar="FATOR",
+                    help="pausa proporcional ao texto, para gravar em video "
+                         "(1.0 = ritmo de leitura; 0.5 = duas vezes mais rapido)")
+    ap.add_argument("--parte", choices=("tudo", "captura", "expiracao"),
+                    default="tudo",
+                    help="recorta a demo: 'captura' = cenarios 1 a 6, "
+                         "'expiracao' = cenarios 7 e 8 (bons para um GIF curto)")
     ap.add_argument("--base-url", help="bate num servidor ja rodando")
     ap.add_argument("--manter-banco", action="store_true",
                     help="nao apaga o banco da demo antes de rodar")
@@ -683,6 +706,7 @@ def main() -> None:
 
     SIMPLES = args.simples
     PAUSA = args.pausa
+    RITMO = args.devagar
 
     if args.base_url:
         import httpx
@@ -708,10 +732,16 @@ def main() -> None:
 
     with TestClient(app) as cliente:
         api = Api(cliente)
-        roda(api)
-        roda_expiracao(api, BANCO_DEMO)
-        prova_trigger_no_banco(BANCO_DEMO)
-        resumo_final(api)
+        # 'expiracao' pode rodar sozinho porque usa outra familia (Carla) e nao
+        # depende de nada que os cenarios 1 a 6 tenham deixado no banco.
+        if args.parte in ("tudo", "captura"):
+            roda(api)
+        if args.parte in ("tudo", "expiracao"):
+            roda_expiracao(api, BANCO_DEMO)
+        if args.parte in ("tudo", "captura"):
+            prova_trigger_no_banco(BANCO_DEMO)
+        if args.parte == "tudo":
+            resumo_final(api)
 
     if not SIMPLES:
         print(f"\nBanco da demo: {BANCO_DEMO}")

@@ -1,283 +1,170 @@
 # CRF — Central de Relacionamento com a Família
 
-**Projeto:** Match Perfeito — Inteligência na Inscrição de Creche
-**Escopo deste repositório:** apenas o recorte de captura (T0) descrito em
-`docs/CRF - MVP Reduzido - Cadastro e Captura de Contatos.md`.
+**Projeto Match Perfeito — Inteligência na Inscrição de Creche**
 
-O fluxo implementado é: inscrição chega do matricula.rio → CRF grava responsável
-e criança (chaveada pelo CPF da criança) → conversa guiada no WhatsApp pede até 2
-contatos de apoio, um campo por vez → contatos ficam registrados **vinculados à
-criança**.
-
-Fora de escopo (deliberadamente): convocação de vaga, cascata de acionamento,
-painel de unidade, score de confiabilidade, check-ins periódicos, integração real
-com Cloud API / Evolution API.
+Um protótipo que monta a rede de contatos de confiança de cada criança **no
+momento da inscrição na creche**, conversando com a família pelo WhatsApp.
 
 ---
 
-## Rodando
+## O problema
 
-Requer Python 3.12+ e [uv](https://docs.astral.sh/uv/).
+Uma família se inscreve na fila da creche e espera meses. Quando finalmente
+aparece uma vaga, a Prefeitura liga — e ninguém responde. Número trocado, celular
+perdido, a mãe está no trabalho e não pode atender.
+
+A vaga vai para o próximo da fila. E aquela família continua esperando, sem nunca
+saber que a vez dela chegou.
+
+## A ideia
+
+**Pedir os contatos de apoio no dia da inscrição, não no dia da vaga.**
+
+Quando a criança é inscrita, o sistema puxa conversa no WhatsApp do responsável e
+pede uma ou duas pessoas de confiança — a avó, um vizinho, uma tia. Meses depois,
+quando a vaga surgir, existe mais de uma porta para bater.
+
+É como a lista de contatos de emergência da escola, só que criada no momento
+certo: quando a família está engajada porque acabou de se inscrever, e não no
+meio de uma urgência.
+
+---
+
+## Como funciona
+
+Sem site, sem aplicativo, sem senha. A família recebe uma mensagem e responde.
+E responde **um campo por vez**:
+
+```
+CRF   ▸ Olá, Maria! Aqui é a Prefeitura do Rio – Educação. Recebemos a
+        inscrição de Ana Silva para creche. Precisamos de 1 ou 2 pessoas de
+        confiança para avisar caso não consigamos falar com você.
+        Qual o nome da primeira pessoa?
+
+Maria ◂ Joana Souza
+
+CRF   ▸ Qual o parentesco de Joana Souza com você? (ex.: avó, tio, vizinho)
+
+Maria ◂ vovó
+
+CRF   ▸ Qual o telefone de Joana Souza?
+
+Maria ◂ (21) 98888-1234
+
+CRF   ▸ Contato registrado! Quer cadastrar mais uma pessoa para Ana Silva?
+        Responda SIM ou NÃO.
+```
+
+Se o sistema pedisse tudo de uma vez, viria *"minha sogra Joana e o vizinho
+Carlos"* — e alguém teria que decifrar. Uma pergunta por vez elimina isso: o
+sistema sempre sabe o que está perguntando, então sempre sabe interpretar a
+resposta.
+
+Isso exige que ele **tenha memória**. Cada mensagem chega isolada, como uma carta
+solta, e o sistema precisa saber em que ponto da conversa cada família está. É a
+peça central do que foi construído aqui.
+
+---
+
+## As regras de comportamento
+
+**Insiste onde importa, cede onde não importa.** Se a família responde "não
+lembro" no lugar do telefone, o sistema pergunta de novo — contato sem telefone
+não serve para nada. Mas se ela responde "pessoa que cuida dela" no lugar do
+parentesco, o sistema aceita e segue: ali, travar a conversa custa mais do que
+ganha.
+
+**Até 2 contatos por criança**, e essa regra está garantida no próprio banco de
+dados — não depende de o programa estar correto.
+
+**Os contatos são da criança, não do responsável.** Se a mesma mãe tem dois
+filhos inscritos, cada um tem sua própria lista. A mesma avó pode ser contato
+dos dois netos.
+
+**Irmãos entram numa fila.** Uma família tem um só WhatsApp. Se duas conversas
+rodassem ao mesmo tempo, "Joana Souza" seria ambíguo — de qual filho? Então o
+segundo filho espera, e a conversa dele emenda na do primeiro
+automaticamente, sem a família precisar pedir.
+
+**Se a família para de responder, o sistema não desiste na hora.** Depois de um
+dia de silêncio, manda um lembrete retomando *exatamente* a pergunta onde parou —
+sem obrigar ninguém a começar de novo. Depois de três dias, encerra a conversa;
+a inscrição continua valendo.
+
+**E se a família voltar depois?** O sistema retoma o cadastro abandonado. Mas não
+transforma um "oi, ainda dá tempo?" no nome da pessoa de confiança — repete a
+pergunta. Registrar um contato chamado "oi" seria pior do que perguntar duas
+vezes.
+
+**O sistema recusa o que não pode aceitar:** inscrição sem o CPF da criança, CPF
+inválido, número de inscrição que já é de outra criança. E fica calado quando
+deve: a mesma inscrição chegando duas vezes não duplica nada nem incomoda a
+família outra vez.
+
+---
+
+## Vendo funcionando
+
+Requer [Python 3.12+](https://www.python.org/) e [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync
+uv run python scripts/demo.py --simples
 ```
 
-### Demo completa (recomendado para ver o fluxo)
+A demo roda tudo sozinha, sem precisar de servidor nem banco instalado, e imprime
+a história completa de duas famílias: a Maria, que responde tudo, e a Carla, que
+para no meio e volta dias depois. São 9 cenários, incluindo os casos que dão
+errado.
 
-Roda a aplicação em processo, sem precisar subir servidor. Recria o banco a cada
-execução e imprime a conversa inteira, campo a campo. Dois modos:
+| Comando | Para quê |
+|---|---|
+| `uv run python scripts/demo.py --simples` | Mostrar a alguém o que o sistema faz. Lê como conversa de WhatsApp |
+| `uv run python scripts/demo.py` | Depurar. Mostra o estado interno a cada passo |
+| `... --simples --pausa` | Apresentar ao vivo: espera Enter entre cada mensagem |
 
-```bash
-uv run python scripts/demo.py --simples   # lê como uma conversa de WhatsApp
-uv run python scripts/demo.py             # detalhado: etapas, templates, escritas no banco
-```
-
-O modo `--simples` é para mostrar a alguém o que o sistema faz; o detalhado é
-para depurar. Extras: `--pausa` espera Enter entre as mensagens (útil para
-apresentar ao vivo), `--manter-banco` não recria o banco.
-
-Cobre os 9 cenários: captura completa de 2 contatos, fila de irmãos (seção 8.2),
-respostas fora de formato (8.5), telefone duplicado, CPF ausente e CPF com dígito
-verificador inválido (8.3), reenvio de inscrição, número desconhecido, o ciclo de
-lembrete → expiração → destravamento da fila (8.4), reabertura por mensagem
-tardia, e uma prova de que o limite de 2 contatos está travado no banco
-(decisão 3).
-
-### Servidor HTTP
+### Rodando como servidor
 
 ```bash
 uv run uvicorn app.main:app --reload
-uv run python scripts/demo.py --base-url http://127.0.0.1:8000
 ```
 
-Docs interativas em `http://127.0.0.1:8000/docs`.
-
-### Variáveis de ambiente
-
-| Variável | Padrão | Efeito |
-|---|---|---|
-| `CRF_DATABASE` | `./crf.db` | Caminho do arquivo SQLite |
-| `CRF_VALIDAR_DV_CPF` | `1` | `0` desliga a validação do dígito verificador do CPF |
-| `CRF_LEMBRETE_APOS_MIN` | `1440` (24h) | Silêncio da família até o lembrete |
-| `CRF_EXPIRA_APOS_MIN` | `4320` (72h) | Silêncio da família até a sessão expirar |
+Sobe em `http://127.0.0.1:8000`, com uma página de testes em `/docs` onde é
+possível conduzir a conversa inteira clicando, sem terminal — dá para usar como
+painel improvisado numa apresentação.
 
 ---
 
-## Estrutura
+## O que existe e o que não existe
 
-```
-app/
-  schema.sql      DDL (schema da spec traduzido para SQLite)
-  db.py           conexão, PRAGMAs, transação explícita, migração de schema
-  validadores.py  CPF (formato + DV), telefone E.164, parentesco, SIM/NÃO
-  templates.py    templates de mensagem da seção 9
-  mensageria.py   "envio" — grava em `mensagem` e devolve o texto renderizado
-  captura.py      regra de disparo (seção 5) + máquina de estados (seção 6)
-  main.py         endpoints (seção 4)
-scripts/
-  demo.py         roteiro CLI de demonstração
-docs/
-  especificação do recorte
-```
+**Existe:** cadastro do responsável e da criança a partir da inscrição, a
+conversa guiada completa, a fila de irmãos, o ciclo de lembrete e desistência, e
+uma consulta para inspecionar a rede de contatos de cada criança.
 
----
+**Não existe, por decisão de escopo:** aviso à família de que a vaga saiu,
+acionamento em cascata dos contatos, painel para a unidade escolar, e a
+integração real com o WhatsApp. No lugar dela, o protótipo simula tanto a
+inscrição chegando quanto as respostas da família — o que é justamente o que
+permite a demo rodar inteira em segundos.
 
-## Endpoints
+## Limitações que vale saber
 
-| Método | Rota | Papel |
-|---|---|---|
-| `POST` | `/webhooks/matricula-rio` | Simula o passo 1 — inscrição chega |
-| `POST` | `/webhooks/whatsapp/inbound` | Simula o passo 3 — família responde |
-| `POST` | `/manutencao/varrer-sessoes` | Aplica lembrete e expiração às sessões silenciosas (8.4) |
-| `GET` | `/criancas/{cpf}` | Consulta de depuração — árvore de contato |
-| `GET` | `/healthz` | Sanidade |
-
-Não existe adapter de mensageria: "enviar" grava uma linha em `mensagem` com
-`direcao = 'ENVIADA'` e devolve o texto renderizado no corpo da resposta, que é o
-que a demo exibe.
+- **Os lembretes precisam de um agendador.** O sistema tem a rotina que verifica
+  prazos, mas alguém precisa chamá-la periodicamente. Sem isso, a conversa
+  abandonada só é encerrada quando uma nova inscrição daquela família chega.
+- **Um lembrete por período de silêncio**, sem escalonamento.
+- **Respostas ambíguas no "quer cadastrar mais um?"** — "talvez", "acho que sim" —
+  são tratadas como não.
+- **Família com dois filhos cadastra os mesmos contatos duas vezes**, uma por
+  criança. É consequência de os contatos serem da criança; foi aceito
+  conscientemente.
+- **Os webhooks não têm autenticação.** É protótipo.
 
 ---
 
-## Banco: PostgreSQL da spec → SQLite
+## Documentação
 
-O schema da especificação é PostgreSQL. Como o ambiente não tem Postgres nem
-Docker, foi traduzido para SQLite preservando **todas as garantias declarativas**.
-Equivalências:
-
-| Especificação (PostgreSQL) | Implementação (SQLite) |
+| Documento | Conteúdo |
 |---|---|
-| `CREATE TYPE ... AS ENUM` | `TEXT` + `CHECK (col IN (...))` |
-| `UUID DEFAULT gen_random_uuid()` | `TEXT`, UUID gerado na aplicação |
-| `CHAR(11) CHECK (cpf ~ '^\d{11}$')` | `TEXT CHECK (length(cpf)=11 AND cpf NOT GLOB '*[^0-9]*')` |
-| `TIMESTAMPTZ DEFAULT now()` | `TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))` |
-| `JSONB` | `TEXT CHECK (json_valid(...))` |
-| `FUNCTION plpgsql` + `RAISE EXCEPTION` | `TRIGGER ... WHEN ... BEGIN SELECT RAISE(ABORT, ...) END` |
-| Índice único parcial | Idêntico — SQLite suporta |
-
-Dois pontos que exigem atenção nessa tradução:
-
-1. **`cpf` é `TEXT PRIMARY KEY`, não `INTEGER`.** Em SQLite, só
-   `INTEGER PRIMARY KEY` vira alias de `rowid` e sofre coerção numérica — é
-   exatamente isso que apagaria os zeros à esquerda. A demo verifica com
-   `typeof(cpf)` que o valor armazenado é `text`.
-2. **Integridade referencial é desligada por padrão no SQLite e a configuração é
-   por conexão.** Sem `PRAGMA foreign_keys = ON` (aplicado em `db.conectar()`),
-   todos os `REFERENCES` do schema seriam decorativos.
-
-Para migrar para Postgres depois: o `schema.sql` da spec vale como está, e a
-camada de acesso usa SQL puro com placeholders posicionais — a troca é o driver e
-o `?` → `%s`, não a lógica.
-
----
-
-## Expiração de sessão (seção 8.4 da spec)
-
-A spec deixa a sessão `EM_ANDAMENTO` para sempre quando a família não responde.
-O sintoma óbvio é a família perdida; o grave é outro: como só existe **uma**
-sessão ativa por responsável e a fila `captura_pendente` só é consultada no
-encerramento, **uma conversa abandonada bloqueava permanentemente todas as
-outras crianças daquele responsável**. A criança existia no banco, com inscrição
-válida, e era invisível para o sistema sem nenhum sinal de erro.
-
-### Ciclo implementado
-
-```
-família responde ──► relógio de silêncio zera, lembrete rearmado
-                          │
-              24h de silêncio (CRF_LEMBRETE_APOS_MIN)
-                          ▼
-                 M1_LEMBRETE_CAPTURA
-            (retoma a pergunta exata onde parou)
-                          │
-              72h de silêncio (CRF_EXPIRA_APOS_MIN)
-                          ▼
-                  status = EXPIRADA
-         rascunho descartado + fila destravada
-                          │
-              família escreve depois
-                          ▼
-                 M1_REABERTURA_CAPTURA
-```
-
-### Como a varredura é disparada
-
-Sem worker em background, de propósito — o briefing adiou a complexidade de
-polling para a fase de convocação (seção 2.1). São dois gatilhos complementares:
-
-- **`POST /manutencao/varrer-sessoes`** — idempotente e sem estado próprio. É o
-  que faz os lembretes saírem no prazo mesmo quando nada mais acontece no
-  sistema. Chamável por Agendador de Tarefas/cron, ou na mão durante a demo.
-- **Oportunista** — `processar_inscricao` varre as sessões daquele responsável
-  antes de decidir o que fazer. É isso que garante que o bloqueio da fila **não
-  sobreviva a uma nova inscrição**, independentemente de cron configurado.
-
-### Detalhes que não são óbvios
-
-1. **`ultima_resposta_em` é uma coluna separada de `atualizado_em`.** O relógio
-   de silêncio só pode ser movido por uma resposta *da família*. Se a expiração
-   fosse medida por `atualizado_em`, o próprio envio do lembrete reiniciaria a
-   contagem e a sessão nunca venceria.
-2. **`EXPIRADA` é um status distinto, não `CONCLUIDA`.** Chamar de concluída uma
-   captura abandonada envenenaria a taxa de conclusão — que agora sai de graça
-   como métrica.
-3. **O rascunho é descartado na expiração.** Nome e parentesco sem telefone não
-   formam um contato acionável.
-4. **A mensagem tardia não é consumida como nome.** A captura reabre repetindo a
-   pergunta. Um "oi" ou um emoji viraria um contato de apoio chamado "oi" — a
-   pergunta repetida custa menos do que sujar a árvore.
-5. **O índice único parcial continua indexando só `EM_ANDAMENTO`**, então uma
-   sessão expirada não ocupa a vaga do responsável.
-6. **Reabrir escolhe a criança**: a sessão expirada mais recente cuja criança
-   ainda precisa de contatos; se não houver, a primeira da fila. Esse fallback
-   também cura uma fila que tenha ficado órfã por qualquer outro motivo.
-
-### Migração de schema
-
-Isso exigiu uma coluna nova e alargar o `CHECK` de `status` — e SQLite não
-permite alterar um `CHECK` existente. `db.py` reconstrói `conversa_captura`
-preservando os dados (procedimento padrão de `ALTER TABLE` do SQLite: renomear,
-recriar, copiar, dropar, recriar o índice). O gatilho é a **ausência da coluna**,
-não `user_version`, porque bancos criados antes de existir versionamento têm
-`user_version = 0` mesmo estando atualizados. Rodar em banco já atualizado é
-no-op. Verificado contra um banco v1 com dados dentro: sessão preservada, CPF
-ainda `text`, índice parcial recriado, sem tabela residual.
-
----
-
-## Decisões de implementação além da especificação
-
-Itens em que a spec não fecha o comportamento e o código teve de decidir. Todos
-são reversíveis em um lugar só.
-
-1. **`indice_contato` derivado, não fixo em 1.** A seção 5 fixa
-   `indice_contato = 1` ao abrir a sessão. Se a criança ficou com 1 contato (a
-   família respondeu NÃO) e a inscrição é reenviada, isso faria a captura
-   perguntar "quer cadastrar mais um?" depois do 2º contato, e o `INSERT`
-   seguinte bateria no trigger. `_abre_sessao` usa
-   `total_contatos + 1` — como quem chama garante `total < 2`, o valor sempre cai
-   no `CHECK (1, 2)`. Ver `app/captura.py`.
-2. **`codigo_inscricao` já pertencente a outra criança → HTTP 409.** A coluna é
-   `UNIQUE` e independente do CPF, então o upsert por CPF da seção 5 não cobre o
-   caso. Payload inconsistente é rejeitado em vez de gerar erro de constraint.
-3. **No upsert por CPF, o `codigo_inscricao` original é preservado** (só `nome` e
-   `id_responsavel` são atualizados). Alternativa seria sobrescrever — não
-   destrutivo por padrão.
-4. **Telefone fixo é rejeitado.** O canal é WhatsApp, então
-   `normaliza_e164_brasil` só aceita celular; número de 10 dígitos iniciado em
-   6–9 recebe o nono dígito, iniciado em 2–5 (fixo) é recusado.
-5. **`crianca_cpf` aceita `str | int`.** Se o CPF chegar como número no JSON, o
-   normalizador aplica `zfill(11)` e recupera os zeros à esquerda em vez de
-   deixar passar um valor de 10 dígitos.
-6. **Validação do DV do CPF rejeita com 422**, conforme seção 7 (validação na
-   aplicação, não no banco), com escape por `CRF_VALIDAR_DV_CPF=0` porque a spec
-   admite dado sintético que não passe no cálculo. Os CPFs da demo são gerados
-   com DV válido.
-7. **Quatro templates a mais.** A spec descreve o comportamento sem nomear o
-   template: `M1_PEDE_NOME_SEGUNDO`, `ERRO_NOME_VAZIO`,
-   `ERRO_TELEFONE_DUPLICADO` (obrigatório — a constraint
-   `UNIQUE (cpf_crianca, telefone_e164)` existe e precisa de resposta ao
-   usuário), `ERRO_LIMITE_CONTATOS` (defensivo, para o trigger).
-8. **`GET /criancas/{cpf}` devolve também o bloco `captura`** (sessão ativa com
-   etapa e dados parciais, e se a criança está na fila). É endpoint de
-   depuração; a spec pede criança + responsável + contatos.
-9. **A mensagem do trigger não interpola o CPF.** `RAISE(ABORT)` do SQLite só
-   aceita literal, então usa o prefixo estável `CRF_MAX_CONTATOS_APOIO:`, que a
-   aplicação distingue de uma violação de `UNIQUE`.
-10. **A reabertura por mensagem tardia encosta em autoatendimento**, que a seção
-    10 da spec põe fora de escopo. Foi uma decisão explícita: ignorar uma família
-    que está justamente colaborando custa mais do que o desvio de escopo. Fica
-    contido — a mensagem tardia só retoma uma captura que já existia, não permite
-    iniciar nada novo.
-
----
-
-## Arestas conhecidas (herdadas da spec, não corrigidas de propósito)
-
-- **Os lembretes dependem de alguém chamar a varredura.** Sem cron configurado, a
-  expiração só acontece quando uma nova inscrição daquele responsável chega. O
-  bloqueio da fila não sobrevive; o lembrete pontual, sim.
-- **Um único lembrete por período de silêncio.** Ele é rearmado a cada resposta
-  da família, então uma família que responde e para de novo recebe outro — mas
-  não há escalonamento (2º, 3º lembrete).
-- **Resposta não reconhecida em `CONFIRMAR_PROXIMO` encerra a sessão.** A seção
-  6.1 diz "senão → encerrar", então "talvez" ou "hmm" fecham a captura como se
-  fossem NÃO. Implementado ao pé da letra; vale reconsiderar.
-- **Seção 8.1 — fadiga entre irmãos.** Por decisão 5 (âncora na criança), a
-  família cadastra os mesmos contatos uma vez por criança. A demo mostra isso
-  acontecendo. Trade-off aceito, não bug.
-- **Seção 8.5 — sem limite de tentativas** em resposta fora de formato.
-- **Sem autenticação nos webhooks.** Nenhum dos dois endpoints valida origem ou
-  assinatura.
-
----
-
-## Pontos da spec que continuam abertos (seção 11)
-
-1. Confirmar com a SME que o matricula.rio coleta e valida o CPF **da criança**
-   no ato da inscrição — é o requisito que decide se `crianca.cpf` como chave
-   primária sobrevive fora do protótipo.
-2. Criança sem CPF (8.3) hoje é rejeitada com 422 e não entra no banco. A
-   alternativa registrada na spec é `cpf UNIQUE` + UUID substituto.
-3. Atalho futuro para reaproveitar contatos entre irmãos ("usar os mesmos
-   contatos de [CRIANCA_1]? SIM/NÃO").
+| [Especificação do recorte](docs/CRF%20-%20MVP%20Reduzido%20-%20Cadastro%20e%20Captura%20de%20Contatos.md) | O que foi especificado, as decisões de produto e os casos de borda |
+| [Notas técnicas](docs/NOTAS-TECNICAS.md) | Estrutura do código, endpoints, modelo de dados, decisões de implementação e pontos abertos |

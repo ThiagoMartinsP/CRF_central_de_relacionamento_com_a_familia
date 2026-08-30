@@ -351,7 +351,7 @@ Não tratado neste MVP: como `crianca.cpf` é `NOT NULL PRIMARY KEY`, uma inscri
 
 Sem tratamento neste MVP (sem cascata, sem lembrete, sem expiração). A sessão fica `EM_ANDAMENTO` indefinidamente — aceitável para o protótipo.
 
-> **Resolvido depois desta especificação.** Este caso foi implementado: um lembrete após 24h de silêncio da família, expiração após 72h, e a expiração destrava a fila `captura_pendente`. O motivo de não ter ficado como "aceitável para o protótipo" é que a consequência não era só a família perdida: como só existe uma sessão ativa por responsável, uma conversa abandonada bloqueava permanentemente todas as outras crianças daquele responsável. Ver a seção "Expiração de sessão" no `README.md`.
+> **Resolvido depois desta especificação.** Este caso foi implementado: um lembrete após 24h de silêncio da família, expiração após 72h, e a expiração destrava a fila `captura_pendente`. O motivo de não ter ficado como "aceitável para o protótipo" é que a consequência não era só a família perdida: como só existe uma sessão ativa por responsável, uma conversa abandonada bloqueava permanentemente todas as outras crianças daquele responsável. Ver a seção "Expiração de sessão" em `docs/NOTAS-TECNICAS.md`.
 
 ### 8.5 Resposta fora de formato (telefone inválido, etc.)
 
@@ -389,4 +389,4 @@ Convocação de vaga e sua máquina de estados; cascata de acionamento (titular 
 
 ## Notas de implementação
 
-O estado da implementação, as traduções de PostgreSQL para SQLite e as decisões que este documento deixou abertas estão registradas no `README.md` na raiz do repositório.
+O estado da implementação, as traduções de PostgreSQL para SQLite e as decisões que este documento deixou abertas estão registradas em `docs/NOTAS-TECNICAS.md`. O `README.md` na raiz descreve o sistema em linguagem não técnica.

@@ -90,20 +90,32 @@ def normaliza_e164_brasil(bruto: object) -> str | None:
 
 # ---------------------------------------------------------------- PARENTESCO
 
+# Os canonicos sao grafados corretamente, com acento: este valor vai para o
+# banco e e' exibido de volta a operadores e familias - "avo" no lugar de "avó"
+# parece erro de digitacao do sistema.
 _SINONIMOS_GRAU = {
-    "mae": ("mae", "mamae", "genitora"),
+    "mãe": ("mãe", "mamãe", "genitora"),
     "pai": ("pai", "papai", "genitor"),
-    "avo": ("avo", "vovo", "vovoo"),
+    "avó": ("avó", "vovó"),
+    "avô": ("avô", "vovô"),
     "tio": ("tio",),
     "tia": ("tia",),
-    "irmao": ("irmao", "mano"),
-    "irma": ("irma", "mana"),
-    "vizinho": ("vizinho", "vizinha"),
-    "amigo": ("amigo", "amiga"),
+    "irmão": ("irmão", "mano"),
+    "irmã": ("irmã", "mana"),
+    "vizinho": ("vizinho",),
+    "vizinha": ("vizinha",),
+    "amigo": ("amigo",),
+    "amiga": ("amiga",),
     "madrinha": ("madrinha",),
     "padrinho": ("padrinho",),
-    "primo": ("primo", "prima"),
+    "primo": ("primo",),
+    "prima": ("prima",),
 }
+
+_SEM_ACENTO_GRAU: dict[str, set[str]] = {}
+for _canonico, _variantes in _SINONIMOS_GRAU.items():
+    for _variante in _variantes:
+        _SEM_ACENTO_GRAU.setdefault(_sem_acento(_variante), set()).add(_canonico)
 
 
 def normaliza_grau_relacao(texto: str) -> str:
@@ -111,12 +123,20 @@ def normaliza_grau_relacao(texto: str) -> str:
 
     O campo e' TEXT no banco de proposito: uma resposta fora da lista nao pode
     travar a conversa.
+
+    A familia digita sem acento com frequencia, entao ha um segundo passe sem
+    acentuacao - mas ele so vale quando o resultado e' unico. "vovo" continua
+    gravado como veio, porque pode ser avo ou avo (avó/avô) e chutar o genero
+    de uma pessoa da rede de apoio e' pior do que guardar o texto cru.
     """
     limpo = (texto or "").strip()
-    chave = _sem_acento(limpo).lower()
+    baixo = limpo.lower()
     for canonico, variantes in _SINONIMOS_GRAU.items():
-        if chave in variantes:
+        if baixo in variantes:
             return canonico
+    candidatos = _SEM_ACENTO_GRAU.get(_sem_acento(baixo), set())
+    if len(candidatos) == 1:
+        return next(iter(candidatos))
     return limpo
 
 

@@ -26,11 +26,16 @@ uv sync
 ### Demo completa (recomendado para ver o fluxo)
 
 Roda a aplicação em processo, sem precisar subir servidor. Recria o banco a cada
-execução e imprime a conversa inteira, campo a campo:
+execução e imprime a conversa inteira, campo a campo. Dois modos:
 
 ```bash
-uv run python scripts/demo.py
+uv run python scripts/demo.py --simples   # lê como uma conversa de WhatsApp
+uv run python scripts/demo.py             # detalhado: etapas, templates, escritas no banco
 ```
+
+O modo `--simples` é para mostrar a alguém o que o sistema faz; o detalhado é
+para depurar. Extras: `--pausa` espera Enter entre as mensagens (útil para
+apresentar ao vivo), `--manter-banco` não recria o banco.
 
 Cobre os 9 cenários: captura completa de 2 contatos, fila de irmãos (seção 8.2),
 respostas fora de formato (8.5), telefone duplicado, CPF ausente e CPF com dígito

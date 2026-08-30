@@ -13,6 +13,7 @@ Extras:
     --parte tudo            os 9 cenarios (fila de irmaos, recusas, expiracao)
     --devagar [FATOR]       pausa entre mensagens, para gravar em video
     --pausa                 espera Enter entre as mensagens (bom para apresentar)
+    --cor sempre|nunca      forca ou desliga a cor (padrao: auto)
     --base-url URL          bate num servidor de pe em vez de rodar em processo
     --manter-banco          nao apaga o banco da demo antes de rodar
 
@@ -51,7 +52,71 @@ NOMES = {TEL_MARIA: "Maria", TEL_CARLA: "Carla", TEL_DESCONHECIDO: "Numero novo"
 SIMPLES = False
 PAUSA = False
 RITMO = 0.0   # multiplicador de pausa; 0 = sem pausa nenhuma
+COR = False
 LARGURA = 78
+
+
+# ---------------------------------------------------------------------- cores
+#
+# Regra: cor marca ESTRUTURA (moldura, rotulo, simbolo); o texto das mensagens
+# fica na cor padrao do terminal. Assim a demo continua legivel em tema claro e
+# em tema escuro - fixar o texto em branco a quebraria num terminal claro.
+
+_RESET = "\033[0m"
+NEGRITO = "\033[1m"
+FRACO = "\033[2m"
+AZUL = "\033[38;2;88;166;255m"      # CRF / Prefeitura
+VERDE = "\033[38;2;76;195;138m"     # familia
+VERDE_OK = "\033[38;2;63;185;80m"   # contato gravado
+AMBAR = "\033[38;2;210;153;34m"     # recusa
+CINZA = "\033[38;2;139;148;158m"    # acao do sistema
+ROXO = "\033[38;2;188;140;255m"     # reguas de capitulo
+
+
+def tinta(texto: str, *codigos: str) -> str:
+    if not COR or not codigos:
+        return texto
+    return "".join(codigos) + texto + _RESET
+
+
+def _liga_ansi_no_windows() -> bool:
+    """Habilita ENABLE_VIRTUAL_TERMINAL_PROCESSING no console do Windows.
+
+    O Windows Terminal ja interpreta ANSI, mas o console classico (conhost)
+    so passa a interpretar depois desta chamada - sem ela a demo imprimiria
+    os codigos de escape como texto.
+    """
+    if os.name != "nt":
+        return True
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+        modo = ctypes.c_uint32()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(modo)):
+            return False
+        return bool(kernel32.SetConsoleMode(handle, modo.value | 0x0004))
+    except Exception:
+        return False
+
+
+def decide_cor(preferencia: str) -> bool:
+    if preferencia == "nunca":
+        return False
+    if preferencia == "sempre":
+        # Melhor esforco: num pipe nao existe console para configurar, e
+        # GetConsoleMode falha - mas quem consome o pipe e' que interpreta os
+        # escapes, entao o resultado dessa chamada nao pode decidir nada aqui.
+        _liga_ansi_no_windows()
+        return True
+    # auto: nada de escapes quando a saida vai para arquivo ou pipe, e respeita
+    # a convencao NO_COLOR (https://no-color.org).
+    if os.environ.get("NO_COLOR") is not None:
+        return False
+    if not sys.stdout.isatty():
+        return False
+    return _liga_ansi_no_windows()
 
 
 # ------------------------------------------------------------------ formatacao
@@ -103,13 +168,15 @@ def _espera(texto: str = "") -> None:
 def cabecalho(tecnico: str, simples: str) -> None:
     print()
     if SIMPLES:
-        print("━" * LARGURA)
-        print(f"  {simples}")
-        print("━" * LARGURA)
+        regua = tinta("━" * LARGURA, ROXO)
+        print(regua)
+        print(f"  {tinta(simples, NEGRITO)}")
+        print(regua)
     else:
-        print("=" * LARGURA)
-        print(tecnico)
-        print("=" * LARGURA)
+        regua = tinta("=" * LARGURA, CINZA)
+        print(regua)
+        print(tinta(tecnico, NEGRITO))
+        print(regua)
     # Respiro maior na virada de capitulo: e' onde quem assiste se reorienta.
     _espera(simples if SIMPLES else tecnico)
 
@@ -120,22 +187,23 @@ def nota(tecnico: str = "", simples: str = "") -> None:
         if simples:
             print()
             for linha in _quebra(simples, 70):
-                print(f"  {linha}")
+                print(f"  {tinta(linha, FRACO)}")
             _espera(simples)
     elif tecnico:
-        print(f"\n-- {tecnico}")
+        print(f"\n{tinta('--', CINZA)} {tinta(tecnico, FRACO)}")
 
 
 def bot(mensagens: list[dict]) -> None:
     for m in mensagens:
         print()
         if SIMPLES:
-            print("        ┌─ CRF · Prefeitura do Rio")
+            print("        " + tinta("┌─ CRF · Prefeitura do Rio", AZUL))
             for linha in _quebra(m["conteudo"]):
-                print(f"        │ {linha}")
-            print("        └" + "─" * 30)
+                print(f"        {tinta('│', AZUL)} {linha}")
+            print("        " + tinta("└" + "─" * 30, AZUL))
         else:
-            print(f"   CRF  [{m['template']}]")
+            rotulo = tinta(f"[{m['template']}]", AZUL, FRACO)
+            print(f"   {tinta('CRF', AZUL)}  {rotulo}")
             for linha in _quebra(m["conteudo"], 68):
                 print(f"        {linha}")
         _espera(m["conteudo"])
@@ -145,29 +213,29 @@ def familia(telefone: str, texto: str) -> None:
     if SIMPLES:
         quem = NOMES.get(telefone, "Familia")
         print()
-        print(f"  ┌─ {quem}")
+        print("  " + tinta(f"┌─ {quem}", VERDE))
         for linha in _quebra(texto):
-            print(f"  │ {linha}")
-        print("  └" + "─" * 30)
+            print(f"  {tinta('│', VERDE)} {linha}")
+        print("  " + tinta("└" + "─" * 30, VERDE))
     else:
-        print(f"   FAM  > {texto!r}")
+        print(f"   {tinta('FAM', VERDE)}  > {texto!r}")
     _espera(texto)
 
 
-def marca(simbolo: str, texto: str) -> None:
+def marca(simbolo: str, texto: str, cor: str = CINZA) -> None:
     """Linha de status do modo simples, com recuo continuo."""
     linhas = _quebra(texto, 64)
-    print(f"        {simbolo}  {linhas[0]}")
+    print(f"        {tinta(simbolo, cor)}  {tinta(linhas[0], FRACO)}")
     for linha in linhas[1:]:
-        print(f"           {linha}")
+        print(f"           {tinta(linha, FRACO)}")
 
 
 def sistema(texto: str) -> None:
     """Marca uma acao do proprio sistema, nao uma mensagem trocada."""
     if SIMPLES:
-        marca("⏱", texto)
+        marca("⏱", texto, CINZA)
     else:
-        print(f"   [sistema] {texto}")
+        print(f"   {tinta('[sistema]', CINZA)} {texto}")
 
 
 # ------------------------------------------------------------------ chamadas
@@ -184,7 +252,7 @@ class Api:
         if r.status_code >= 400:
             detalhe = corpo["detail"]
             if SIMPLES:
-                marca("⚠", f"Inscrição recusada: {_motivo_leigo(detalhe)}")
+                marca("⚠", f"Inscrição recusada: {_motivo_leigo(detalhe)}", AMBAR)
             else:
                 print(f"   HTTP {r.status_code}  {detalhe['codigo']}: {detalhe['mensagem']}")
             return corpo
@@ -225,7 +293,8 @@ class Api:
             if corpo.get("contato_gravado"):
                 c = corpo["contato_gravado"]
                 marca("✓", f"Contato guardado: {c['nome']} "
-                           f"({c['grau_relacao']}) — {tel_bonito(c['telefone_e164'])}")
+                           f"({c['grau_relacao']}) — {tel_bonito(c['telefone_e164'])}",
+                      VERDE_OK)
             if corpo["acao"].startswith("IGNORADA"):
                 marca("⏱", "Mensagem ignorada: não havia pergunta em aberto "
                            "para esse número.")
@@ -259,25 +328,31 @@ class Api:
         cap = corpo["captura"]
         ativa = cap["sessao_ativa"]
         if SIMPLES:
-            print(f"\n  \U0001f9d2 {corpo['crianca']['nome']}  "
-                  f"(CPF {cpf_bonito(corpo['crianca']['cpf'])})")
-            print(f"       responsável   {corpo['responsavel']['nome']} — "
+            nome_crianca = tinta(corpo["crianca"]["nome"], NEGRITO)
+            cpf_fmt = tinta(f"(CPF {cpf_bonito(corpo['crianca']['cpf'])})", FRACO)
+            print(f"\n  \U0001f9d2 {nome_crianca}  {cpf_fmt}")
+            print(f"       {tinta('responsável', FRACO)}   "
+                  f"{corpo['responsavel']['nome']} — "
                   f"{tel_bonito(corpo['responsavel']['telefone_e164'])}")
             if corpo["contatos_apoio"]:
                 for i, c in enumerate(corpo["contatos_apoio"], 1):
-                    print(f"       apoio {i}       {c['nome']} ({c['grau_relacao']}) "
+                    print(f"       {tinta(f'apoio {i}', VERDE_OK)}       "
+                          f"{c['nome']} ({c['grau_relacao']}) "
                           f"— {tel_bonito(c['telefone_e164'])}")
             else:
-                print("       apoio         nenhum contato cadastrado ainda")
+                print(f"       {tinta('apoio', FRACO)}         "
+                      f"{tinta('nenhum contato cadastrado ainda', AMBAR)}")
+            rotulo = tinta("conversa", FRACO)
             if ativa:
-                print("       conversa      em andamento, aguardando resposta")
+                print(f"       {rotulo}      "
+                      f"{tinta('em andamento, aguardando resposta', AZUL)}")
             elif any(h["status"] == "EXPIRADA" for h in cap["historico_sessoes"]):
                 concluida = any(h["status"] == "CONCLUIDA" for h in cap["historico_sessoes"])
-                print("       conversa      encerrada"
-                      + (" (houve uma tentativa que venceu antes)" if concluida
-                         else " por falta de resposta"))
+                texto = ("encerrada (houve uma tentativa que venceu antes)"
+                         if concluida else "encerrada por falta de resposta")
+                print(f"       {rotulo}      {tinta(texto, AMBAR)}")
             else:
-                print("       conversa      concluída")
+                print(f"       {rotulo}      {tinta('concluída', VERDE_OK)}")
             return corpo
 
         print(f"   crianca      {corpo['crianca']['nome']}  cpf={corpo['crianca']['cpf']}  "
@@ -709,7 +784,7 @@ def prova_trigger_no_banco(caminho: Path) -> None:
     except sqlite3.IntegrityError as erro:
         if SIMPLES:
             marca("✓", "Bloqueado pelo próprio banco de dados. A regra não "
-                       "depende do programa estar correto.")
+                       "depende do programa estar correto.", VERDE_OK)
         else:
             print(f"   IntegrityError: {erro}")
             print("   -> trigger trg_max_contatos_apoio barrou "
@@ -739,7 +814,7 @@ def resumo_final(api: Api) -> None:
 
 
 def main() -> None:
-    global SIMPLES, PAUSA, RITMO
+    global SIMPLES, PAUSA, RITMO, COR
 
     # O console do Windows usa cp1252 por padrao no Python 3.13, o que quebra
     # os acentos dos templates.
@@ -765,6 +840,9 @@ def main() -> None:
                     help="essencial (padrao) = uma inscricao e a captura dos "
                          "contatos; tudo = os 9 cenarios; captura = cenarios "
                          "1 a 6; expiracao = cenarios 7 e 8")
+    ap.add_argument("--cor", choices=("auto", "sempre", "nunca"), default="auto",
+                    help="auto (padrao) desliga a cor quando a saida nao e' um "
+                         "terminal; 'sempre' forca, util ao gravar por pipe")
     ap.add_argument("--base-url", help="bate num servidor ja rodando")
     ap.add_argument("--manter-banco", action="store_true",
                     help="nao apaga o banco da demo antes de rodar")
@@ -773,6 +851,7 @@ def main() -> None:
     SIMPLES = args.simples
     PAUSA = args.pausa
     RITMO = args.devagar
+    COR = decide_cor(args.cor)
 
     if args.base_url:
         import httpx

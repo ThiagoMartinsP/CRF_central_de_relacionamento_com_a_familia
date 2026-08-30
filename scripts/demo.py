@@ -555,20 +555,21 @@ def roda_essencial(api: Api) -> None:
                 "periodicos para manter o contato principal verificado. NAO "
                 "implementado neste recorte.",
         titulo="Próximo passo: a régua de comunicação (ainda não implementado)",
-        simples="Cadastrar os contatos uma vez não basta. A fila de creche dura "
-                "meses, às vezes anos, e nesse tempo número muda, pessoa se "
-                "muda, celular se perde. A ideia é o CRF manter uma conversa "
-                "periódica com a família — uma régua de comunicação — só para "
-                "confirmar que o contato principal continua ALCANÇÁVEL: uma "
-                "mensagem leve de vez em quando, e a resposta, ou o silêncio, "
-                "diz se aquele número ainda é o caminho certo. Assim, quando a "
-                "vaga aparecer, a creche não liga para o número cadastrado há "
-                "dois anos: liga para o que foi confirmado mais recentemente. "
-                "Um contato que parou de responder deixa de ser a opção "
-                "principal, e outro da árvore assume o lugar. O objetivo é que "
-                "a criança tenha sempre, como primeira porta, alguém "
-                "localizado e disponível — e não apenas alguém que estava "
-                "disponível no dia da inscrição.",
+        simples="Cadastrar os contatos uma vez não basta. A fila de creche "
+                "dura meses, às vezes anos, e nesse tempo número muda, pessoa "
+                "se muda, celular se perde. A ideia é a Central de "
+                "Relacionamento com a Família manter uma régua de "
+                "comunicação: uma conversa periódica com o responsável, só "
+                "para confirmar que o contato principal continua ALCANÇÁVEL. "
+                "Uma mensagem leve de vez em quando, e a resposta, ou o "
+                "silêncio, diz se aquele número ainda é o caminho certo. "
+                "Assim, quando a vaga aparecer, a creche não liga para o "
+                "número cadastrado há dois anos: liga para o que foi "
+                "confirmado mais recentemente. Um contato que parou de "
+                "responder deixa de ser a opção principal, e outro da árvore "
+                "assume o lugar. O objetivo é que a criança tenha sempre, "
+                "como primeira porta, alguém localizado e disponível — e não "
+                "apenas alguém que estava disponível no dia da inscrição.",
         cor=AMBAR,
     )
 

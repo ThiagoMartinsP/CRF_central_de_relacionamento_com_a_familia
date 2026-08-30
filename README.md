@@ -32,10 +32,12 @@ execução e imprime a conversa inteira, campo a campo:
 uv run python scripts/demo.py
 ```
 
-Cobre os 7 cenários: captura completa de 2 contatos, fila de irmãos (seção 8.2),
+Cobre os 9 cenários: captura completa de 2 contatos, fila de irmãos (seção 8.2),
 respostas fora de formato (8.5), telefone duplicado, CPF ausente e CPF com dígito
-verificador inválido (8.3), reenvio de inscrição, número desconhecido, e uma prova
-de que o limite de 2 contatos está travado no banco (decisão 3).
+verificador inválido (8.3), reenvio de inscrição, número desconhecido, o ciclo de
+lembrete → expiração → destravamento da fila (8.4), reabertura por mensagem
+tardia, e uma prova de que o limite de 2 contatos está travado no banco
+(decisão 3).
 
 ### Servidor HTTP
 
@@ -52,6 +54,8 @@ Docs interativas em `http://127.0.0.1:8000/docs`.
 |---|---|---|
 | `CRF_DATABASE` | `./crf.db` | Caminho do arquivo SQLite |
 | `CRF_VALIDAR_DV_CPF` | `1` | `0` desliga a validação do dígito verificador do CPF |
+| `CRF_LEMBRETE_APOS_MIN` | `1440` (24h) | Silêncio da família até o lembrete |
+| `CRF_EXPIRA_APOS_MIN` | `4320` (72h) | Silêncio da família até a sessão expirar |
 
 ---
 
@@ -60,7 +64,7 @@ Docs interativas em `http://127.0.0.1:8000/docs`.
 ```
 app/
   schema.sql      DDL (schema da spec traduzido para SQLite)
-  db.py           conexão, PRAGMAs, transação explícita
+  db.py           conexão, PRAGMAs, transação explícita, migração de schema
   validadores.py  CPF (formato + DV), telefone E.164, parentesco, SIM/NÃO
   templates.py    templates de mensagem da seção 9
   mensageria.py   "envio" — grava em `mensagem` e devolve o texto renderizado
@@ -80,6 +84,7 @@ docs/
 |---|---|---|
 | `POST` | `/webhooks/matricula-rio` | Simula o passo 1 — inscrição chega |
 | `POST` | `/webhooks/whatsapp/inbound` | Simula o passo 3 — família responde |
+| `POST` | `/manutencao/varrer-sessoes` | Aplica lembrete e expiração às sessões silenciosas (8.4) |
 | `GET` | `/criancas/{cpf}` | Consulta de depuração — árvore de contato |
 | `GET` | `/healthz` | Sanidade |
 
@@ -118,6 +123,80 @@ Dois pontos que exigem atenção nessa tradução:
 Para migrar para Postgres depois: o `schema.sql` da spec vale como está, e a
 camada de acesso usa SQL puro com placeholders posicionais — a troca é o driver e
 o `?` → `%s`, não a lógica.
+
+---
+
+## Expiração de sessão (seção 8.4 da spec)
+
+A spec deixa a sessão `EM_ANDAMENTO` para sempre quando a família não responde.
+O sintoma óbvio é a família perdida; o grave é outro: como só existe **uma**
+sessão ativa por responsável e a fila `captura_pendente` só é consultada no
+encerramento, **uma conversa abandonada bloqueava permanentemente todas as
+outras crianças daquele responsável**. A criança existia no banco, com inscrição
+válida, e era invisível para o sistema sem nenhum sinal de erro.
+
+### Ciclo implementado
+
+```
+família responde ──► relógio de silêncio zera, lembrete rearmado
+                          │
+              24h de silêncio (CRF_LEMBRETE_APOS_MIN)
+                          ▼
+                 M1_LEMBRETE_CAPTURA
+            (retoma a pergunta exata onde parou)
+                          │
+              72h de silêncio (CRF_EXPIRA_APOS_MIN)
+                          ▼
+                  status = EXPIRADA
+         rascunho descartado + fila destravada
+                          │
+              família escreve depois
+                          ▼
+                 M1_REABERTURA_CAPTURA
+```
+
+### Como a varredura é disparada
+
+Sem worker em background, de propósito — o briefing adiou a complexidade de
+polling para a fase de convocação (seção 2.1). São dois gatilhos complementares:
+
+- **`POST /manutencao/varrer-sessoes`** — idempotente e sem estado próprio. É o
+  que faz os lembretes saírem no prazo mesmo quando nada mais acontece no
+  sistema. Chamável por Agendador de Tarefas/cron, ou na mão durante a demo.
+- **Oportunista** — `processar_inscricao` varre as sessões daquele responsável
+  antes de decidir o que fazer. É isso que garante que o bloqueio da fila **não
+  sobreviva a uma nova inscrição**, independentemente de cron configurado.
+
+### Detalhes que não são óbvios
+
+1. **`ultima_resposta_em` é uma coluna separada de `atualizado_em`.** O relógio
+   de silêncio só pode ser movido por uma resposta *da família*. Se a expiração
+   fosse medida por `atualizado_em`, o próprio envio do lembrete reiniciaria a
+   contagem e a sessão nunca venceria.
+2. **`EXPIRADA` é um status distinto, não `CONCLUIDA`.** Chamar de concluída uma
+   captura abandonada envenenaria a taxa de conclusão — que agora sai de graça
+   como métrica.
+3. **O rascunho é descartado na expiração.** Nome e parentesco sem telefone não
+   formam um contato acionável.
+4. **A mensagem tardia não é consumida como nome.** A captura reabre repetindo a
+   pergunta. Um "oi" ou um emoji viraria um contato de apoio chamado "oi" — a
+   pergunta repetida custa menos do que sujar a árvore.
+5. **O índice único parcial continua indexando só `EM_ANDAMENTO`**, então uma
+   sessão expirada não ocupa a vaga do responsável.
+6. **Reabrir escolhe a criança**: a sessão expirada mais recente cuja criança
+   ainda precisa de contatos; se não houver, a primeira da fila. Esse fallback
+   também cura uma fila que tenha ficado órfã por qualquer outro motivo.
+
+### Migração de schema
+
+Isso exigiu uma coluna nova e alargar o `CHECK` de `status` — e SQLite não
+permite alterar um `CHECK` existente. `db.py` reconstrói `conversa_captura`
+preservando os dados (procedimento padrão de `ALTER TABLE` do SQLite: renomear,
+recriar, copiar, dropar, recriar o índice). O gatilho é a **ausência da coluna**,
+não `user_version`, porque bancos criados antes de existir versionamento têm
+`user_version = 0` mesmo estando atualizados. Rodar em banco já atualizado é
+no-op. Verificado contra um banco v1 com dados dentro: sessão preservada, CPF
+ainda `text`, índice parcial recriado, sem tabela residual.
 
 ---
 
@@ -160,15 +239,22 @@ são reversíveis em um lugar só.
 9. **A mensagem do trigger não interpola o CPF.** `RAISE(ABORT)` do SQLite só
    aceita literal, então usa o prefixo estável `CRF_MAX_CONTATOS_APOIO:`, que a
    aplicação distingue de uma violação de `UNIQUE`.
+10. **A reabertura por mensagem tardia encosta em autoatendimento**, que a seção
+    10 da spec põe fora de escopo. Foi uma decisão explícita: ignorar uma família
+    que está justamente colaborando custa mais do que o desvio de escopo. Fica
+    contido — a mensagem tardia só retoma uma captura que já existia, não permite
+    iniciar nada novo.
 
 ---
 
 ## Arestas conhecidas (herdadas da spec, não corrigidas de propósito)
 
-- **Seção 8.4 — família nunca responde.** Sem lembrete, sem expiração: a sessão
-  fica `EM_ANDAMENTO` para sempre e a fila `captura_pendente` daquele responsável
-  nunca destrava, porque só `encerrar_sessao` a drena. É a primeira coisa a
-  resolver antes de produção.
+- **Os lembretes dependem de alguém chamar a varredura.** Sem cron configurado, a
+  expiração só acontece quando uma nova inscrição daquele responsável chega. O
+  bloqueio da fila não sobrevive; o lembrete pontual, sim.
+- **Um único lembrete por período de silêncio.** Ele é rearmado a cada resposta
+  da família, então uma família que responde e para de novo recebe outro — mas
+  não há escalonamento (2º, 3º lembrete).
 - **Resposta não reconhecida em `CONFIRMAR_PROXIMO` encerra a sessão.** A seção
   6.1 diz "senão → encerrar", então "talvez" ou "hmm" fecham a captura como se
   fossem NÃO. Implementado ao pé da letra; vale reconsiderar.

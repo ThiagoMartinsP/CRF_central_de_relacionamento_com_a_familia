@@ -80,6 +80,26 @@ def webhook_whatsapp_inbound(payload: MensagemEntrada, con: Conexao):
         return captura.processar_mensagem_recebida(con, **payload.model_dump())
 
 
+@app.post("/manutencao/varrer-sessoes")
+def varrer_sessoes(con: Conexao):
+    """Aplica lembrete e expiracao as sessoes silenciosas (seção 8.4).
+
+    Idempotente e sem estado proprio: pode ser chamado por Agendador de
+    Tarefas / cron na frequencia que fizer sentido, ou na mao durante a demo.
+    Nao existe worker em background de proposito - o briefing adiou a
+    complexidade de polling para a fase de convocacao.
+    """
+    with db.transacao(con):
+        resumo = captura.varrer_sessoes(con)
+    return {
+        "prazos_minutos": {
+            "lembrete": captura.LEMBRETE_APOS_MIN,
+            "expiracao": captura.EXPIRA_APOS_MIN,
+        },
+        **resumo,
+    }
+
+
 @app.get("/criancas/{cpf}")
 def obter_crianca(cpf: str, con: Conexao):
     """Consulta de depuracao: arvore de contato de uma crianca."""

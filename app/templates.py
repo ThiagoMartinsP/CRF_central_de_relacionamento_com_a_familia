@@ -38,10 +38,29 @@ TEMPLATES: dict[str, str] = {
         "Não consegui entender esse número. Pode mandar de novo? "
         "(ex.: (21) 99999-0001)"
     ),
-    # --- acrescimos de implementacao (comportamento descrito, template sem nome) ---
-    "M1_PEDE_NOME_SEGUNDO": (
-        "Qual o nome da segunda pessoa de confiança para [CRIANCA]?"
+    # --- expiracao de sessao (secao 8.4) ---
+    "M1_LEMBRETE_CAPTURA": (
+        "Oi, [NOME]! Ainda estamos esperando os contatos de apoio de [CRIANCA]. "
+        "[PERGUNTA]"
     ),
+    "M1_EXPIRACAO_SEM_CONTATO": (
+        "Não conseguimos concluir o cadastro dos contatos de apoio de [CRIANCA]. "
+        "A inscrição continua valendo. Se quiser cadastrar agora, responda esta "
+        "mensagem."
+    ),
+    "M1_EXPIRACAO_COM_CONTATO": (
+        "Os contatos de apoio que você já cadastrou para [CRIANCA] estão "
+        "registrados. Se quiser incluir outra pessoa, responda esta mensagem."
+    ),
+    "M1_REABERTURA_CAPTURA": (
+        "Vamos retomar o cadastro dos contatos de apoio de [CRIANCA]. [PERGUNTA]"
+    ),
+    # --- acrescimos de implementacao (comportamento descrito, template sem nome) ---
+    # Sem [CRIANCA] de proposito: estes dois sao usados embutidos em
+    # M1_LEMBRETE_CAPTURA / M1_REABERTURA_CAPTURA, ou logo depois de uma
+    # mensagem que ja nomeou a crianca. Repetir o nome soa robotico.
+    "M1_PEDE_NOME_PRIMEIRO": "Qual o nome da primeira pessoa de confiança?",
+    "M1_PEDE_NOME_SEGUNDO": "Qual o nome da segunda pessoa de confiança?",
     "ERRO_NOME_VAZIO": (
         "Preciso do nome da pessoa de confiança. Pode escrever o nome dela?"
     ),

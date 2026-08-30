@@ -14,6 +14,7 @@ import os
 import sqlite3
 import sys
 import warnings
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -24,9 +25,12 @@ from app.validadores import gera_cpf_valido  # noqa: E402
 BANCO_DEMO = RAIZ / "crf_demo.db"
 
 TEL_MARIA = "+5521999990001"
+TEL_CARLA = "+5521988880002"
 TEL_DESCONHECIDO = "+5521912340000"
 CPF_ANA = gera_cpf_valido("529982247")     # CPF sintetico com DV valido
 CPF_BRUNO = gera_cpf_valido("012345678")   # comeca com 0: prova que o zero sobrevive
+CPF_DUDA = gera_cpf_valido("222333444")
+CPF_ELIAS = gera_cpf_valido("333444555")
 
 
 # ------------------------------------------------------------------ impressao
@@ -107,6 +111,19 @@ class Api:
         bot(corpo["mensagens"])
         return corpo
 
+    def varrer(self):
+        r = self.c.post("/manutencao/varrer-sessoes")
+        corpo = r.json()
+        print(f"   HTTP {r.status_code}  expiradas={len(corpo['expiradas'])}  "
+              f"lembretes={len(corpo['lembretes'])}")
+        for e in corpo["expiradas"]:
+            print(f"        [DB] sessao -> EXPIRADA (parou na etapa "
+                  f"{e['etapa_em_que_parou']})")
+        for lem in corpo["lembretes"]:
+            print(f"        [DB] lembrete_enviado_em preenchido (etapa {lem['etapa']})")
+        bot(corpo["mensagens"])
+        return corpo
+
     def crianca(self, cpf: str):
         r = self.c.get(f"/criancas/{cpf}")
         corpo = r.json()
@@ -129,6 +146,10 @@ class Api:
         print(f"   captura      sessao_ativa="
               f"{ativa['etapa'] + '/idx' + str(ativa['indice_contato']) if ativa else 'nenhuma'}"
               f"  na_fila={cap['aguardando_na_fila']}")
+        historico = " | ".join(
+            f"{h['status']}@{h['etapa']}" for h in cap["historico_sessoes"]
+        )
+        print(f"   sessoes      {historico or '(nenhuma)'}")
         return corpo
 
 
@@ -225,9 +246,89 @@ def roda(api: Api) -> None:
     api.responde(TEL_MARIA, "obrigada!")
 
 
+def envelhece_sessao(caminho: Path, telefone: str, minutos: int) -> None:
+    """Recua o relogio de silencio da sessao ativa daquele responsavel.
+
+    Simula horas de silencio em milissegundos - sem isto o cenario exigiria
+    esperar de verdade. Mexe so em `ultima_resposta_em`, que e' exatamente o
+    campo que a varredura le.
+    """
+    alvo = datetime.now(timezone.utc) - timedelta(minutes=minutos)
+    marca = alvo.strftime("%Y-%m-%dT%H:%M:%S.") + f"{alvo.microsecond // 1000:03d}Z"
+    con = sqlite3.connect(caminho)
+    cursor = con.execute(
+        "UPDATE conversa_captura SET ultima_resposta_em = ? WHERE status = 'EM_ANDAMENTO' "
+        "AND id_responsavel = (SELECT id FROM responsavel WHERE telefone_e164 = ?)",
+        (marca, telefone),
+    )
+    con.commit()
+    print(f"   [demo] recuou ultima_resposta_em em {minutos} min "
+          f"({cursor.rowcount} sessao/oes)")
+    con.close()
+
+
+def roda_expiracao(api: Api, caminho: Path) -> None:
+    titulo("CENARIO 7 - Familia para de responder e bloqueia o irmao (secao 8.4)")
+    passo("Carla inscreve Duda -> captura inicia")
+    api.inscricao(
+        codigo_inscricao="INSC-2026-000301",
+        crianca_cpf=CPF_DUDA,
+        crianca_nome="Duda Nunes",
+        responsavel_nome="Carla Nunes",
+        responsavel_telefone=TEL_CARLA,
+    )
+    passo("Carla inscreve Elias com a captura da Duda aberta -> Elias enfileirado")
+    api.inscricao(
+        codigo_inscricao="INSC-2026-000302",
+        crianca_cpf=CPF_ELIAS,
+        crianca_nome="Elias Nunes",
+        responsavel_nome="Carla Nunes",
+        responsavel_telefone=TEL_CARLA,
+    )
+    passo("Carla responde o nome e para de responder")
+    api.responde(TEL_CARLA, "Tereza Nunes")
+    print("   -> ANTES DA CORRECAO: a sessao ficava aqui para sempre e o Elias,")
+    print("      enfileirado, nunca receberia convite nenhum.")
+
+    passo("24h de silencio + POST /manutencao/varrer-sessoes -> lembrete")
+    envelhece_sessao(caminho, TEL_CARLA, 25 * 60)
+    api.varrer()
+    print("   -> lembrete retoma a pergunta exata onde parou; sessao segue aberta")
+
+    passo("varredura de novo, sem novo silencio -> nada acontece (idempotente)")
+    api.varrer()
+
+    passo("72h de silencio + varredura -> expira e destrava a fila")
+    envelhece_sessao(caminho, TEL_CARLA, 73 * 60)
+    api.varrer()
+    print("   -> a mesma varredura que expira a Duda ja chama o Elias da fila")
+
+    passo("estado das duas criancas")
+    api.crianca(CPF_DUDA)
+    api.crianca(CPF_ELIAS)
+
+    passo("Carla agora responde pelo Elias e conclui com 1 contato")
+    api.responde(TEL_CARLA, "Marcia Nunes")
+    api.responde(TEL_CARLA, "tia")
+    api.responde(TEL_CARLA, "(21) 96666-7777")
+    api.responde(TEL_CARLA, "nao")
+
+    titulo("CENARIO 8 - Mensagem tardia reabre a captura que expirou")
+    passo("Carla escreve do nada; a Duda ficou sem nenhum contato")
+    api.responde(TEL_CARLA, "oi, ainda da tempo?")
+    print("   -> o texto NAO foi consumido como nome: 'oi, ainda da tempo?' nao")
+    print("      pode virar um contato de apoio. A pergunta e' repetida.")
+    api.responde(TEL_CARLA, "Tereza Nunes")
+    api.responde(TEL_CARLA, "avó")
+    api.responde(TEL_CARLA, "21 95555-4444")
+    api.responde(TEL_CARLA, "nao")
+    passo("arvore da Duda finalmente montada, depois de uma sessao expirada")
+    api.crianca(CPF_DUDA)
+
+
 def prova_trigger_no_banco(caminho: Path) -> None:
     """Decisao 3: o limite de 2 esta no banco, nao so na aplicacao."""
-    titulo("CENARIO 7 - Limite de 2 contatos travado no banco (decisao 3)")
+    titulo("CENARIO 9 - Limite de 2 contatos travado no banco (decisao 3)")
     con = sqlite3.connect(caminho)
     con.execute("PRAGMA foreign_keys = ON")
     passo("INSERT direto de um 3o contato de apoio para a Ana, sem passar pela app")
@@ -269,7 +370,7 @@ def main() -> None:
 
         with httpx.Client(base_url=args.base_url, timeout=10) as cliente:
             roda(Api(cliente))
-        print("\n(--base-url: cenario 7 exige acesso local ao arquivo do banco)")
+        print("\n(--base-url: cenarios 7 a 9 exigem acesso local ao arquivo do banco)")
         return
 
     os.environ["CRF_DATABASE"] = str(BANCO_DEMO)
@@ -285,7 +386,9 @@ def main() -> None:
     from app.main import app
 
     with TestClient(app) as cliente:
-        roda(Api(cliente))
+        api = Api(cliente)
+        roda(api)
+        roda_expiracao(api, BANCO_DEMO)
     prova_trigger_no_banco(BANCO_DEMO)
     print(f"\nBanco da demo: {BANCO_DEMO}")
 

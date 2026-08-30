@@ -56,18 +56,24 @@ END;
 -- ---------- ESTADO DA CONVERSA GUIADA ----------
 -- Sessao controlada por RESPONSAVEL (e' o telefone dele que responde), mas
 -- registra para qual CRIANCA os contatos estao sendo capturados.
+-- `ultima_resposta_em` existe separada de `atualizado_em` de proposito: o
+-- relogio de silencio da familia so pode ser movido por uma resposta DELA.
+-- Se a expiracao fosse medida por `atualizado_em`, o proprio envio do lembrete
+-- reiniciaria a contagem e a sessao nunca venceria.
 CREATE TABLE IF NOT EXISTS conversa_captura (
-  id              TEXT PRIMARY KEY,
-  id_responsavel  TEXT NOT NULL REFERENCES responsavel(id),
-  cpf_crianca     TEXT NOT NULL REFERENCES crianca(cpf),
-  indice_contato  INTEGER NOT NULL CHECK (indice_contato IN (1, 2)),
-  etapa           TEXT NOT NULL DEFAULT 'NOME'
-                    CHECK (etapa IN ('NOME', 'PARENTESCO', 'TELEFONE', 'CONFIRMAR_PROXIMO')),
-  dados_parciais  TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(dados_parciais)),
-  status          TEXT NOT NULL DEFAULT 'EM_ANDAMENTO'
-                    CHECK (status IN ('EM_ANDAMENTO', 'CONCLUIDA')),
-  criado_em       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-  atualizado_em   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  id                   TEXT PRIMARY KEY,
+  id_responsavel       TEXT NOT NULL REFERENCES responsavel(id),
+  cpf_crianca          TEXT NOT NULL REFERENCES crianca(cpf),
+  indice_contato       INTEGER NOT NULL CHECK (indice_contato IN (1, 2)),
+  etapa                TEXT NOT NULL DEFAULT 'NOME'
+                         CHECK (etapa IN ('NOME', 'PARENTESCO', 'TELEFONE', 'CONFIRMAR_PROXIMO')),
+  dados_parciais       TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(dados_parciais)),
+  status               TEXT NOT NULL DEFAULT 'EM_ANDAMENTO'
+                         CHECK (status IN ('EM_ANDAMENTO', 'CONCLUIDA', 'EXPIRADA')),
+  ultima_resposta_em   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  lembrete_enviado_em  TEXT,
+  criado_em            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  atualizado_em        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 -- Uma unica sessao em andamento por responsavel: impede que uma resposta da

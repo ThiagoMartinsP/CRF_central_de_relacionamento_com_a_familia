@@ -6,11 +6,18 @@ import json
 import os
 import sqlite3
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from . import validadores as v
 from .mensageria import enviar, registrar_recebida
+from .templates import renderiza
 
 VALIDA_DV_CPF = os.environ.get("CRF_VALIDAR_DV_CPF", "1") not in ("0", "false", "False")
+
+# Secao 8.4: prazos de silencio da familia, contados desde a ultima resposta
+# DELA. Em minutos para caber tanto o padrao de producao quanto a demo.
+LEMBRETE_APOS_MIN = int(os.environ.get("CRF_LEMBRETE_APOS_MIN", 24 * 60))
+EXPIRA_APOS_MIN = int(os.environ.get("CRF_EXPIRA_APOS_MIN", 72 * 60))
 
 
 class ErroDominio(Exception):
@@ -143,6 +150,11 @@ def processar_inscricao(
 
     responsavel = _upsert_responsavel(con, telefone, responsavel_nome)
 
+    # Varredura oportunista: e' o que garante que uma conversa abandonada nao
+    # bloqueie a fila deste responsavel para sempre (secao 8.4). Roda antes da
+    # decisao abaixo, porque pode liberar - ou ocupar - a sessao ativa dele.
+    varredura = varrer_sessoes(con, responsavel["id"])
+
     existente = con.execute("SELECT * FROM crianca WHERE cpf = ?", (cpf,)).fetchone()
     if existente is None:
         con.execute(
@@ -168,6 +180,7 @@ def processar_inscricao(
         },
         "crianca": {"cpf": cpf, "nome": crianca_nome, "criada": crianca_criada},
         "mensagens": [],
+        "manutencao": varredura,
     }
 
     total_contatos = _conta_contatos(con, cpf)
@@ -221,37 +234,171 @@ def processar_inscricao(
 # ---------------------------------- secao 6.2: encerramento + drenagem da fila
 
 
+def _drena_fila(con: sqlite3.Connection, id_responsavel: str) -> list[dict]:
+    """Chama a proxima crianca da fila, se houver e se o responsavel estiver livre.
+
+    Extraido de `encerrar_sessao` porque a expiracao (secao 8.4) precisa da
+    mesma drenagem: era justamente a falta disso que deixava um irmao
+    enfileirado invisivel para sempre atras de uma conversa abandonada.
+    """
+    if _sessao_ativa_do_responsavel(con, id_responsavel) is not None:
+        return []
+
+    proxima = con.execute(
+        "SELECT * FROM captura_pendente WHERE id_responsavel = ? "
+        "ORDER BY criado_em, id LIMIT 1",
+        (id_responsavel,),
+    ).fetchone()
+    if proxima is None:
+        return []
+
+    con.execute("DELETE FROM captura_pendente WHERE id = ?", (proxima["id"],))
+    _abre_sessao(con, id_responsavel, proxima["cpf_crianca"])
+    return [
+        enviar(
+            con,
+            id_responsavel,
+            "M1_PEDE_CONTATO_PROXIMA_CRIANCA",
+            crianca=_nome_crianca(con, proxima["cpf_crianca"]),
+        )
+    ]
+
+
 def encerrar_sessao(con: sqlite3.Connection, sessao: sqlite3.Row) -> list[dict]:
-    mensagens: list[dict] = []
     _atualiza_sessao(con, sessao["id"], status="CONCLUIDA")
-    mensagens.append(
+    mensagens = [
         enviar(
             con,
             sessao["id_responsavel"],
             "M1_ENCERRAMENTO",
             crianca=_nome_crianca(con, sessao["cpf_crianca"]),
         )
-    )
-
-    proxima = con.execute(
-        "SELECT * FROM captura_pendente WHERE id_responsavel = ? "
-        "ORDER BY criado_em, id LIMIT 1",
-        (sessao["id_responsavel"],),
-    ).fetchone()
-    if proxima is None:
-        return mensagens
-
-    con.execute("DELETE FROM captura_pendente WHERE id = ?", (proxima["id"],))
-    _abre_sessao(con, sessao["id_responsavel"], proxima["cpf_crianca"])
-    mensagens.append(
-        enviar(
-            con,
-            sessao["id_responsavel"],
-            "M1_PEDE_CONTATO_PROXIMA_CRIANCA",
-            crianca=_nome_crianca(con, proxima["cpf_crianca"]),
-        )
-    )
+    ]
+    mensagens.extend(_drena_fila(con, sessao["id_responsavel"]))
     return mensagens
+
+
+# ------------------------------------ secao 8.4: sessao sem resposta da familia
+
+
+def _pergunta_pendente(con: sqlite3.Connection, sessao: sqlite3.Row) -> str:
+    """Reconstroi a pergunta em aberto, para o lembrete retomar de onde parou."""
+    dados = json.loads(sessao["dados_parciais"])
+    crianca = _nome_crianca(con, sessao["cpf_crianca"])
+    etapa = sessao["etapa"]
+    if etapa == "NOME":
+        template = (
+            "M1_PEDE_NOME_PRIMEIRO"
+            if sessao["indice_contato"] == 1
+            else "M1_PEDE_NOME_SEGUNDO"
+        )
+        return renderiza(template, crianca=crianca)
+    if etapa == "PARENTESCO":
+        return renderiza("M1_PEDE_PARENTESCO", nome_contato=dados.get("nome", ""))
+    if etapa == "TELEFONE":
+        return renderiza("M1_PEDE_TELEFONE", nome_contato=dados.get("nome", ""))
+    return renderiza("M1_PERGUNTA_SEGUNDO", crianca=crianca)
+
+
+def _instante_utc(minutos_atras: int = 0) -> str:
+    """Timestamp no mesmo formato que o `strftime` do schema grava.
+
+    Precisa bater exatamente, porque a comparacao de prazo e' lexicografica
+    sobre ISO-8601 em UTC.
+    """
+    alvo = datetime.now(timezone.utc) - timedelta(minutes=minutos_atras)
+    return alvo.strftime("%Y-%m-%dT%H:%M:%S.") + f"{alvo.microsecond // 1000:03d}Z"
+
+
+def _expira_sessao(con: sqlite3.Connection, sessao: sqlite3.Row) -> list[dict]:
+    """Fecha a sessao vencida, descarta o rascunho e destrava a fila.
+
+    O rascunho em `dados_parciais` e' descartado de proposito: nome e parentesco
+    sem telefone nao formam um contato acionavel.
+    """
+    _atualiza_sessao(con, sessao["id"], status="EXPIRADA")
+    crianca = _nome_crianca(con, sessao["cpf_crianca"])
+    template = (
+        "M1_EXPIRACAO_COM_CONTATO"
+        if _conta_contatos(con, sessao["cpf_crianca"]) > 0
+        else "M1_EXPIRACAO_SEM_CONTATO"
+    )
+    mensagens = [enviar(con, sessao["id_responsavel"], template, crianca=crianca)]
+    mensagens.extend(_drena_fila(con, sessao["id_responsavel"]))
+    return mensagens
+
+
+def _envia_lembrete(con: sqlite3.Connection, sessao: sqlite3.Row) -> dict:
+    responsavel = con.execute(
+        "SELECT nome FROM responsavel WHERE id = ?", (sessao["id_responsavel"],)
+    ).fetchone()
+    mensagem = enviar(
+        con,
+        sessao["id_responsavel"],
+        "M1_LEMBRETE_CAPTURA",
+        nome=responsavel["nome"],
+        crianca=_nome_crianca(con, sessao["cpf_crianca"]),
+        pergunta=_pergunta_pendente(con, sessao),
+    )
+    # Marca o lembrete SEM tocar em `ultima_resposta_em`: o relogio de silencio
+    # continua correndo em direcao a expiracao.
+    _atualiza_sessao(con, sessao["id"], lembrete_enviado_em=_instante_utc())
+    return mensagem
+
+
+def varrer_sessoes(
+    con: sqlite3.Connection, id_responsavel: str | None = None
+) -> dict:
+    """Aplica lembrete e expiracao as sessoes silenciosas. Idempotente.
+
+    Roda de duas formas: por endpoint de manutencao (para os lembretes sairem
+    no prazo) e oportunisticamente, sempre que um webhook toca o responsavel
+    (para o bloqueio da fila nunca sobreviver a uma nova inscricao).
+    """
+    filtro = "AND id_responsavel = ?" if id_responsavel else ""
+    argumentos_extra = (id_responsavel,) if id_responsavel else ()
+    resumo: dict = {"expiradas": [], "lembretes": [], "mensagens": []}
+
+    # Expiracao antes do lembrete: uma sessao que ja passou dos dois prazos
+    # deve morrer, nao ser lembrada.
+    vencidas = con.execute(
+        f"SELECT * FROM conversa_captura WHERE status = 'EM_ANDAMENTO' "
+        f"AND ultima_resposta_em <= ? {filtro} ORDER BY ultima_resposta_em",
+        (_instante_utc(EXPIRA_APOS_MIN), *argumentos_extra),
+    ).fetchall()
+    for sessao in vencidas:
+        resumo["mensagens"].extend(_expira_sessao(con, sessao))
+        resumo["expiradas"].append(
+            {"id_sessao": sessao["id"], "cpf_crianca": sessao["cpf_crianca"],
+             "etapa_em_que_parou": sessao["etapa"]}
+        )
+
+    silenciosas = con.execute(
+        f"SELECT * FROM conversa_captura WHERE status = 'EM_ANDAMENTO' "
+        f"AND lembrete_enviado_em IS NULL AND ultima_resposta_em <= ? {filtro} "
+        f"ORDER BY ultima_resposta_em",
+        (_instante_utc(LEMBRETE_APOS_MIN), *argumentos_extra),
+    ).fetchall()
+    for sessao in silenciosas:
+        resumo["mensagens"].append(_envia_lembrete(con, sessao))
+        resumo["lembretes"].append(
+            {"id_sessao": sessao["id"], "cpf_crianca": sessao["cpf_crianca"],
+             "etapa": sessao["etapa"]}
+        )
+
+    # Rede de seguranca: garante a invariante "crianca enfileirada sempre acaba
+    # recebendo uma sessao", mesmo que a fila tenha ficado orfa por outro motivo.
+    orfaos = con.execute(
+        f"SELECT DISTINCT p.id_responsavel FROM captura_pendente p WHERE NOT EXISTS "
+        f"(SELECT 1 FROM conversa_captura c WHERE c.id_responsavel = p.id_responsavel "
+        f"AND c.status = 'EM_ANDAMENTO')"
+        + (" AND p.id_responsavel = ?" if id_responsavel else ""),
+        argumentos_extra,
+    ).fetchall()
+    for linha in orfaos:
+        resumo["mensagens"].extend(_drena_fila(con, linha["id_responsavel"]))
+
+    return resumo
 
 
 # ------------------------------------- secao 6.1: webhook inbound do WhatsApp
@@ -295,6 +442,59 @@ def _grava_contato(
     )
 
 
+def _reabre_captura(
+    con: sqlite3.Connection, responsavel: sqlite3.Row, texto: str
+) -> dict:
+    """Mensagem tardia, sem pergunta em aberto: retoma a captura que expirou.
+
+    A mensagem recebida NAO e' consumida como nome do contato, mesmo que a
+    familia esteja respondendo exatamente o que foi pedido. Um "oi" ou um
+    emoji viraria um contato de apoio chamado "oi" - preferimos repetir a
+    pergunta a sujar a arvore.
+    """
+    candidato = con.execute(
+        "SELECT c.cpf_crianca FROM conversa_captura c "
+        "WHERE c.id_responsavel = ? AND c.status = 'EXPIRADA' AND ("
+        "  SELECT COUNT(*) FROM contato_apoio a WHERE a.cpf_crianca = c.cpf_crianca"
+        ") < 2 ORDER BY c.atualizado_em DESC, c.id LIMIT 1",
+        (responsavel["id"],),
+    ).fetchone()
+
+    if candidato is not None:
+        cpf = candidato["cpf_crianca"]
+    else:
+        # Nenhuma sessao expirada pendente, mas pode haver crianca enfileirada
+        # que nunca chegou a ganhar sessao.
+        fila = con.execute(
+            "SELECT * FROM captura_pendente WHERE id_responsavel = ? "
+            "ORDER BY criado_em, id LIMIT 1",
+            (responsavel["id"],),
+        ).fetchone()
+        if fila is None:
+            return {"acao": "IGNORADA_SEM_SESSAO_ABERTA", "mensagens": []}
+        con.execute("DELETE FROM captura_pendente WHERE id = ?", (fila["id"],))
+        cpf = fila["cpf_crianca"]
+
+    registrar_recebida(con, responsavel["id"], texto)
+    sessao = _abre_sessao(con, responsavel["id"], cpf)
+    mensagem = enviar(
+        con,
+        responsavel["id"],
+        "M1_REABERTURA_CAPTURA",
+        crianca=_nome_crianca(con, cpf),
+        pergunta=_pergunta_pendente(con, sessao),
+    )
+    return {
+        "acao": "CAPTURA_REABERTA",
+        "cpf_crianca": cpf,
+        "indice_contato": sessao["indice_contato"],
+        "etapa_atual": "NOME",
+        "status_sessao": "EM_ANDAMENTO",
+        "contato_gravado": None,
+        "mensagens": [mensagem],
+    }
+
+
 def processar_mensagem_recebida(
     con: sqlite3.Connection, *, telefone_e164: str, texto: str
 ) -> dict:
@@ -307,9 +507,17 @@ def processar_mensagem_recebida(
 
     sessao = _sessao_ativa_do_responsavel(con, responsavel["id"])
     if sessao is None:
-        return {"acao": "IGNORADA_SEM_SESSAO_ABERTA", "mensagens": []}
+        return _reabre_captura(con, responsavel, texto)
 
     registrar_recebida(con, responsavel["id"], texto)
+    # Zera o relogio de silencio e libera um novo lembrete mais adiante nesta
+    # mesma sessao, caso a familia pare de responder outra vez.
+    _atualiza_sessao(
+        con,
+        sessao["id"],
+        ultima_resposta_em=_instante_utc(),
+        lembrete_enviado_em=None,
+    )
 
     nome_crianca = _nome_crianca(con, sessao["cpf_crianca"])
     dados = json.loads(sessao["dados_parciais"])
@@ -452,6 +660,11 @@ def consultar_crianca(con: sqlite3.Connection, cpf_bruto: object) -> dict:
     na_fila = con.execute(
         "SELECT 1 FROM captura_pendente WHERE cpf_crianca = ?", (cpf,)
     ).fetchone() is not None
+    historico = con.execute(
+        "SELECT status, etapa, indice_contato, ultima_resposta_em, lembrete_enviado_em "
+        "FROM conversa_captura WHERE cpf_crianca = ? ORDER BY criado_em, id",
+        (cpf,),
+    ).fetchall()
 
     return {
         "crianca": {
@@ -478,5 +691,6 @@ def consultar_crianca(con: sqlite3.Connection, cpf_bruto: object) -> dict:
                 else None
             ),
             "aguardando_na_fila": na_fila,
+            "historico_sessoes": [dict(linha) for linha in historico],
         },
     }

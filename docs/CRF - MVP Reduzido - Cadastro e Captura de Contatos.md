@@ -351,6 +351,8 @@ Não tratado neste MVP: como `crianca.cpf` é `NOT NULL PRIMARY KEY`, uma inscri
 
 Sem tratamento neste MVP (sem cascata, sem lembrete, sem expiração). A sessão fica `EM_ANDAMENTO` indefinidamente — aceitável para o protótipo.
 
+> **Resolvido depois desta especificação.** Este caso foi implementado: um lembrete após 24h de silêncio da família, expiração após 72h, e a expiração destrava a fila `captura_pendente`. O motivo de não ter ficado como "aceitável para o protótipo" é que a consequência não era só a família perdida: como só existe uma sessão ativa por responsável, uma conversa abandonada bloqueava permanentemente todas as outras crianças daquele responsável. Ver a seção "Expiração de sessão" no `README.md`.
+
 ### 8.5 Resposta fora de formato (telefone inválido, etc.)
 
 O webhook reenvia a mesma pergunta com uma mensagem de erro e não avança de etapa. Não há limite de tentativas neste MVP.

@@ -231,6 +231,44 @@ são reversíveis em um lugar só.
 
 ---
 
+## Régua de comunicação (não implementada)
+
+Corresponde aos **check-ins periódicos (M2)** que a seção 10 da spec põe fora de
+escopo. O `README.md` descreve a ideia; aqui fica o que a implementação tocaria.
+
+**O que já serve de base.** A infraestrutura de varredura construída para a
+seção 8.4 é exatamente o gancho: `varrer_sessoes()` é idempotente e sem estado
+próprio, e `POST /manutencao/varrer-sessoes` já é o ponto de entrada para
+qualquer rotina disparada por prazo. Uma régua de check-in seria uma segunda
+rotina no mesmo endpoint. A tabela `mensagem` também já guarda o histórico
+completo de ida e volta por responsável, que é o dado bruto para inferir quem
+responde.
+
+**O que faltaria.**
+
+1. **Verificação por contato, não por sessão.** Hoje o relógio de silêncio
+   (`ultima_resposta_em`) vive em `conversa_captura` e morre com a sessão.
+   A régua precisa de algo durável em `contato_apoio` — um `verificado_em`, e
+   provavelmente um contador de tentativas sem resposta.
+2. **Ordem de preferência explícita.** Hoje a árvore não tem ordem própria: o
+   `GET /criancas/{cpf}` devolve os contatos por `criado_em`. Para a creche
+   "ligar primeiro para o confirmado mais recentemente", a ordem precisa ser um
+   dado, não um efeito da data de cadastro.
+3. **Contato do próprio responsável como nó da árvore.** Hoje o telefone do
+   responsável vive em `responsavel.telefone_e164` e os contatos de apoio em
+   outra tabela. Se o titular pode perder a posição de opção principal, ele
+   passa a ser um nó comparável aos outros — o que muda o modelo, não só uma
+   coluna.
+4. **Régua não pode virar spam.** É um canal oficial da Prefeitura. Frequência,
+   limite de mensagens e o que fazer com quem nunca responde são decisões de
+   produto, não de implementação.
+
+Os itens 1 e 2 são o **score de confiabilidade do nó** que a spec já adiou, visto
+por outro ângulo: a régua é o que alimentaria esse score com dado real em vez de
+suposição.
+
+---
+
 ## Pontos da spec que continuam abertos (seção 11)
 
 1. Confirmar com a SME que o matricula.rio coleta e valida o CPF **da criança**

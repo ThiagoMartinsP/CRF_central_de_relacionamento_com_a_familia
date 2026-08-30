@@ -294,15 +294,16 @@ def familia(telefone: str, texto: str) -> None:
     _espera(texto)
 
 
-def fecho(tecnico: str, titulo: str, simples: str) -> None:
+def fecho(tecnico: str, titulo: str, simples: str, cor: str = ROXO) -> None:
     """Bloco de conclusao: o "para que serve" depois de mostrar o resultado.
 
     Barra lateral em vez de balao, de proposito: nao pode ser confundido com
-    uma mensagem que o CRF mandou para a familia.
+    uma mensagem que o CRF mandou para a familia. A cor separa o que o
+    prototipo faz (roxo) do que ainda e' so desenho (ambar).
     """
     print()
     if SIMPLES:
-        barra = tinta("▌", ROXO)
+        barra = tinta("▌", cor)
         print(f"  {barra} {tinta(titulo.upper(), NEGRITO)}")
         print(f"  {barra}")
         for linha in _quebra(simples, 66):
@@ -547,6 +548,28 @@ def roda_essencial(api: Api) -> None:
                 "própria família cadastrou, a Joana e depois o Carlos. É para "
                 "isso que os contatos foram pedidos meses antes, no dia da "
                 "inscrição.",
+    )
+
+    fecho(
+        tecnico="regua de comunicacao (M2 da especificacao): check-ins "
+                "periodicos para manter o contato principal verificado. NAO "
+                "implementado neste recorte.",
+        titulo="Próximo passo: a régua de comunicação (ainda não implementado)",
+        simples="Cadastrar os contatos uma vez não basta. A fila de creche dura "
+                "meses, às vezes anos, e nesse tempo número muda, pessoa se "
+                "muda, celular se perde. A ideia é o CRF manter uma conversa "
+                "periódica com a família — uma régua de comunicação — só para "
+                "confirmar que o contato principal continua ALCANÇÁVEL: uma "
+                "mensagem leve de vez em quando, e a resposta, ou o silêncio, "
+                "diz se aquele número ainda é o caminho certo. Assim, quando a "
+                "vaga aparecer, a creche não liga para o número cadastrado há "
+                "dois anos: liga para o que foi confirmado mais recentemente. "
+                "Um contato que parou de responder deixa de ser a opção "
+                "principal, e outro da árvore assume o lugar. O objetivo é que "
+                "a criança tenha sempre, como primeira porta, alguém "
+                "localizado e disponível — e não apenas alguém que estava "
+                "disponível no dia da inscrição.",
+        cor=AMBAR,
     )
 
 

@@ -19,7 +19,7 @@ TEMPLATES: dict[str, str] = {
         "da primeira pessoa?"
     ),
     "M1_PEDE_PARENTESCO": (
-        "Qual o parentesco de [NOME_CONTATO] com você? (ex.: avó, tio, vizinho)"
+        "Qual o parentesco de [NOME_CONTATO] com a criança? (ex.: avó, tio, vizinho)"
     ),
     "M1_PEDE_TELEFONE": "Qual o telefone de [NOME_CONTATO]?",
     "M1_PERGUNTA_SEGUNDO": (

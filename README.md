@@ -93,14 +93,43 @@ família outra vez.
 
 ---
 
+## A régua de comunicação
+
+> Esta parte **ainda não está implementada**. É a continuação natural da ideia, e
+> está descrita aqui porque sem ela o resto perde força com o tempo.
+
+Cadastrar os contatos uma vez não basta. A fila de creche dura meses, às vezes
+anos — e nesse tempo número muda, pessoa se muda, celular se perde. Uma árvore de
+contatos montada no dia da inscrição e nunca mais tocada envelhece até virar uma
+lista de números que não atendem mais.
+
+A ideia é o CRF manter uma **conversa periódica** com a família — uma régua de
+comunicação — só para confirmar que o contato principal continua **alcançável**.
+Uma mensagem leve de vez em quando; a resposta, ou o silêncio, diz se aquele
+número ainda é o caminho certo.
+
+O efeito prático é mudar qual porta a creche bate primeiro:
+
+- **Sem a régua:** quando a vaga aparece, a creche liga para o número que foi
+  cadastrado há dois anos e torce.
+- **Com a régua:** a creche liga para o contato **confirmado mais
+  recentemente**. Um número que parou de responder deixa de ser a opção
+  principal, e outro da árvore assume o lugar.
+
+O objetivo é que cada criança tenha sempre, como primeira porta, alguém
+**localizado e disponível** — e não apenas alguém que estava disponível no dia da
+inscrição.
+
+---
+
 ## O que existe e o que não existe
 
 **Existe:** cadastro do responsável e da criança a partir da inscrição, a
 conversa guiada completa, a fila de irmãos, o ciclo de lembrete e desistência, e
 uma consulta para inspecionar a rede de contatos de cada criança.
 
-**Não existe, por decisão de escopo:** aviso à família de que a vaga saiu,
-acionamento em cascata dos contatos, painel para a unidade escolar, e a
-integração real com o WhatsApp. No lugar dela, o protótipo simula tanto a
-inscrição chegando quanto as respostas da família — o que é justamente o que
-permite a demo rodar inteira em segundos.
+**Não existe, por decisão de escopo:** a régua de comunicação descrita acima,
+aviso à família de que a vaga saiu, acionamento em cascata dos contatos, painel
+para a unidade escolar, e a integração real com o WhatsApp. No lugar dela, o
+protótipo simula tanto a inscrição chegando quanto as respostas da família — o
+que é justamente o que permite a demo rodar inteira em segundos.

@@ -5,6 +5,8 @@
 Um protótipo que monta a rede de contatos de confiança de cada criança **no
 momento da inscrição na creche**, conversando com a família pelo WhatsApp.
 
+📹 **[Vídeo da demonstração](docs/demo_CRF.mp4)** — o fluxo completo em execução.
+
 ---
 
 ## O problema
